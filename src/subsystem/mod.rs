@@ -203,17 +203,9 @@ pub trait SubSystem {
 
     fn write_process_memory(&self, address: usize, buffer: &[u8], size: usize) -> Result<usize>;
 
-    fn query_process_info<T: Sized + Default>(
-        &self,
-        info_class: PROCESSINFOCLASS,
-        buffer: &mut T,
-    ) -> Result<()>;
+    fn query_process_info(&self, info_class: PROCESSINFOCLASS, buffer: &mut [u8]) -> Result<()>;
 
-    fn set_process_info<T: Sized + Default>(
-        &self,
-        info_class: PROCESSINFOCLASS,
-        buffer: &T,
-    ) -> Result<()>;
+    fn set_process_info(&self, info_class: PROCESSINFOCLASS, buffer: &[u8]) -> Result<()>;
 
     fn create_remote_thread(
         &self,
@@ -223,7 +215,7 @@ pub trait SubSystem {
         access: u32,
     ) -> Result<HANDLE>;
 
-    fn get_thread_context(hthread: HANDLE) -> Result<CONTEXT>;
+    fn get_thread_context(&self, hthread: HANDLE) -> Result<CONTEXT>;
 
     fn get_thread_context_wow64(&self, hthread: HANDLE) -> Result<WOW64_CONTEXT>;
 

@@ -8,8 +8,8 @@ use windows::Win32::{
         },
         Memory::{
             VirtualAllocEx, VirtualFreeEx, VirtualProtectEx, VirtualQueryEx,
-            MEMORY_BASIC_INFORMATION, PAGE_PROTECTION_FLAGS,
-            VIRTUAL_ALLOCATION_TYPE, VIRTUAL_FREE_TYPE,
+            MEMORY_BASIC_INFORMATION, PAGE_PROTECTION_FLAGS, VIRTUAL_ALLOCATION_TYPE,
+            VIRTUAL_FREE_TYPE,
         },
         SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
         Threading::{
@@ -217,35 +217,27 @@ impl SubSystem for Native {
         }
     }
 
-    fn query_process_info<T: Sized + Default>(
-        &self,
-        info_class: PROCESSINFOCLASS,
-        buffer: &mut T,
-    ) -> Result<()> {
+    fn query_process_info(&self, info_class: PROCESSINFOCLASS, buffer: &mut [u8]) -> Result<()> {
         let mut length: u32 = 0;
         unsafe {
             let result = NtQueryInformationProcess(
                 self.hprocess,
                 info_class,
-                buffer as *mut T as _,
-                core::mem::size_of::<T>() as u32,
+                buffer as *mut [u8] as _,
+                buffer.len() as u32,
                 &mut length as _,
             );
             map_win32_result(result)
         }
     }
 
-    fn set_process_info<T: Sized + Default>(
-        &self,
-        info_class: PROCESSINFOCLASS,
-        buffer: &T,
-    ) -> Result<()> {
+    fn set_process_info(&self, info_class: PROCESSINFOCLASS, buffer: &[u8]) -> Result<()> {
         unsafe {
             if NtSetInformationProcess(
                 self.hprocess,
                 info_class as _,
-                buffer as *const T as _,
-                core::mem::size_of::<T>() as u32,
+                buffer as *const [u8] as _,
+                buffer.len() as u32,
             )
             .is_ok()
             {
@@ -288,7 +280,7 @@ impl SubSystem for Native {
         }
     }
 
-    fn get_thread_context(hthread: HANDLE) -> Result<CONTEXT> {
+    fn get_thread_context(&self, hthread: HANDLE) -> Result<CONTEXT> {
         let mut ctx = CONTEXT::default();
         unsafe {
             if TRUE == GetThreadContext(hthread, &mut ctx) {
@@ -345,7 +337,7 @@ impl SubSystem for Native {
             unsafe {
                 let mut peb: PEB_T<u32> = core::mem::zeroed();
                 let mut ptr = 064;
-                self.query_process_info::<usize>(ProcessWow64Information, &mut ptr)?;
+                self.query_process_info(ProcessWow64Information, any_as_u8_slice_mut(&mut ptr))?;
                 self.read_process_meory(
                     ptr,
                     any_as_u8_slice_mut(&mut peb),
@@ -360,10 +352,7 @@ impl SubSystem for Native {
         unsafe {
             let mut peb: PEB_T<u64> = core::mem::zeroed();
             let mut info: PROCESS_BASIC_INFORMATION = core::mem::zeroed();
-            self.query_process_info::<PROCESS_BASIC_INFORMATION>(
-                ProcessBasicInformation,
-                &mut info,
-            )?;
+            self.query_process_info(ProcessBasicInformation, any_as_u8_slice_mut(&mut info))?;
             self.read_process_meory(
                 info.PebBaseAddress as usize,
                 any_as_u8_slice_mut(&mut peb),
@@ -400,7 +389,7 @@ mod test {
         native
             .read_process_meory(
                 buffer,
-                any_as_u8_slice_mut(&mut read_data),
+                any_as_u8_slice_mut(&mut read_data) as _,
                 std::mem::size_of::<usize>(),
             )
             .unwrap();

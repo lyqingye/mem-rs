@@ -6,11 +6,11 @@ use windows::Win32::{
     },
 };
 
+use crate::subsystem::SubSystem;
 
-
-#[derive(Debug)]
 pub struct ProcessCore {
     hprocess: HANDLE,
+    system: Box<dyn SubSystem>,
 }
 
 impl ProcessCore {
