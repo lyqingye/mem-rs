@@ -1,0 +1,25 @@
+[package]
+name = "mem-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.66"
+thiserror = "1.0.37"
+log = "0.4.17"
+env_logger = "0.10.0"
+
+[dependencies.windows]
+version = "0.44.0"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_Security",
+    "Win32_System_Memory",
+    "Win32_System_WindowsProgramming",
+    "Win32_System_Kernel"
+]
