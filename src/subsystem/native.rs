@@ -1,6 +1,6 @@
 use anyhow::Result;
 use windows::Win32::{
-    Foundation::{CloseHandle, GetLastError, BOOL, FALSE, HANDLE, NTSTATUS, TRUE},
+    Foundation::{GetLastError, BOOL, FALSE, HANDLE, TRUE},
     System::{
         Diagnostics::Debug::{
             GetThreadContext, ReadProcessMemory, SetThreadContext, Wow64GetThreadContext,
@@ -8,19 +8,19 @@ use windows::Win32::{
         },
         Memory::{
             VirtualAllocEx, VirtualFreeEx, VirtualProtectEx, VirtualQueryEx,
-            MEMORY_BASIC_INFORMATION, MEMORY_BASIC_INFORMATION64, PAGE_PROTECTION_FLAGS,
+            MEMORY_BASIC_INFORMATION, PAGE_PROTECTION_FLAGS,
             VIRTUAL_ALLOCATION_TYPE, VIRTUAL_FREE_TYPE,
         },
         SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
         Threading::{
             GetCurrentProcess, IsWow64Process, NtQueryInformationProcess, ProcessBasicInformation,
             ProcessWow64Information, LPTHREAD_START_ROUTINE, PROCESSINFOCLASS,
-            PROCESS_BASIC_INFORMATION, PROCESS_INFORMATION_CLASS, THREAD_CREATION_FLAGS,
+            PROCESS_BASIC_INFORMATION, THREAD_CREATION_FLAGS,
         },
     },
 };
 
-use super::{any_as_u8_slice_mut, NtCreateThreadEx, NtSetInformationProcess, PEB_T};
+use super::{any_as_u8_slice_mut, NtCreateThreadEx, NtSetInformationProcess, SubSystem, PEB_T};
 
 /// Type of barrier
 #[derive(Debug)]
@@ -109,8 +109,8 @@ pub fn map_win32_result<T: Sized>(err: windows::core::Result<T>) -> Result<T> {
     err.map_err(|e| anyhow::anyhow!("code: {} message: {}", e.code(), e.message()))
 }
 
-impl Native {
-    pub fn virtual_alloc_ext(
+impl SubSystem for Native {
+    fn virtual_alloc_ext(
         &self,
         address: usize,
         size: usize,
@@ -133,11 +133,7 @@ impl Native {
         }
     }
 
-    pub fn virtual_free_ext(
-        &self,
-        address: usize,
-        free_type: VIRTUAL_FREE_TYPE,
-    ) -> Result<()> {
+    fn virtual_free_ext(&self, address: usize, free_type: VIRTUAL_FREE_TYPE) -> Result<()> {
         unsafe {
             if TRUE == VirtualFreeEx(self.hprocess, address as _, 0 as usize, free_type) {
                 Ok(())
@@ -147,7 +143,7 @@ impl Native {
         }
     }
 
-    pub fn virtual_query_ext(&self, address: usize) -> Result<MEMORY_BASIC_INFORMATION> {
+    fn virtual_query_ext(&self, address: usize) -> Result<MEMORY_BASIC_INFORMATION> {
         let mut info = MEMORY_BASIC_INFORMATION::default();
         unsafe {
             if 0 != VirtualQueryEx(
@@ -163,7 +159,7 @@ impl Native {
         }
     }
 
-    pub fn virtual_protect_ext(
+    fn virtual_protect_ext(
         &self,
         address: usize,
         size: usize,
@@ -179,12 +175,7 @@ impl Native {
         }
     }
 
-    pub fn read_process_meory(
-        &self,
-        address: usize,
-        buffer: &mut [u8],
-        size: usize,
-    ) -> Result<usize> {
+    fn read_process_meory(&self, address: usize, buffer: &mut [u8], size: usize) -> Result<usize> {
         assert!(buffer.len() >= size);
         let mut bytes: usize = 0;
         unsafe {
@@ -205,12 +196,7 @@ impl Native {
         }
     }
 
-    pub fn write_process_memory(
-        &self,
-        address: usize,
-        buffer: &[u8],
-        size: usize,
-    ) -> Result<usize> {
+    fn write_process_memory(&self, address: usize, buffer: &[u8], size: usize) -> Result<usize> {
         assert!(buffer.len() >= size);
         let mut bytes: usize = 0;
         unsafe {
@@ -231,7 +217,7 @@ impl Native {
         }
     }
 
-    pub fn query_process_info<T: Sized + Default>(
+    fn query_process_info<T: Sized + Default>(
         &self,
         info_class: PROCESSINFOCLASS,
         buffer: &mut T,
@@ -249,7 +235,7 @@ impl Native {
         }
     }
 
-    pub fn set_process_info<T: Sized + Default>(
+    fn set_process_info<T: Sized + Default>(
         &self,
         info_class: PROCESSINFOCLASS,
         buffer: &T,
@@ -270,7 +256,7 @@ impl Native {
         }
     }
 
-    pub fn create_remote_thread(
+    fn create_remote_thread(
         &self,
         start_routine: LPTHREAD_START_ROUTINE,
         args: Option<*const ::core::ffi::c_void>,
@@ -302,7 +288,7 @@ impl Native {
         }
     }
 
-    pub fn get_thread_context(hthread: HANDLE) -> Result<CONTEXT> {
+    fn get_thread_context(hthread: HANDLE) -> Result<CONTEXT> {
         let mut ctx = CONTEXT::default();
         unsafe {
             if TRUE == GetThreadContext(hthread, &mut ctx) {
@@ -313,7 +299,7 @@ impl Native {
         }
     }
 
-    pub fn get_thread_context_wow64(&self, hthread: HANDLE) -> Result<WOW64_CONTEXT> {
+    fn get_thread_context_wow64(&self, hthread: HANDLE) -> Result<WOW64_CONTEXT> {
         let mut ctx = WOW64_CONTEXT::default();
         if self.wow_barrier.target_wow64 == false {
             Err(anyhow::anyhow!(
@@ -330,7 +316,7 @@ impl Native {
         }
     }
 
-    pub fn set_thread_context(&self, hthread: HANDLE, ctx: *const CONTEXT) -> Result<()> {
+    fn set_thread_context(&self, hthread: HANDLE, ctx: *const CONTEXT) -> Result<()> {
         unsafe {
             if TRUE == SetThreadContext(hthread, ctx) {
                 Ok(())
@@ -340,11 +326,7 @@ impl Native {
         }
     }
 
-    pub fn set_thread_context_wow64(
-        &self,
-        hthread: HANDLE,
-        ctx: *const WOW64_CONTEXT,
-    ) -> Result<()> {
+    fn set_thread_context_wow64(&self, hthread: HANDLE, ctx: *const WOW64_CONTEXT) -> Result<()> {
         unsafe {
             if TRUE == Wow64SetThreadContext(hthread, ctx) {
                 Ok(())
@@ -354,7 +336,7 @@ impl Native {
         }
     }
 
-    pub fn get_peb32(&self) -> Result<(PEB_T<u32>, usize)> {
+    fn get_peb32(&self) -> Result<(PEB_T<u32>, usize)> {
         if self.wow_barrier.target_wow64 == false {
             Err(anyhow::anyhow!(
                 "Target process is x64. PEB32 is not available"
@@ -374,7 +356,7 @@ impl Native {
         }
     }
 
-    pub fn get_peb64(&self) -> Result<(PEB_T<u64>, usize)> {
+    fn get_peb64(&self) -> Result<(PEB_T<u64>, usize)> {
         unsafe {
             let mut peb: PEB_T<u64> = core::mem::zeroed();
             let mut info: PROCESS_BASIC_INFORMATION = core::mem::zeroed();
@@ -394,36 +376,56 @@ impl Native {
 
 #[cfg(test)]
 mod test {
-    use windows::Win32::System::Memory::{PAGE_READWRITE, MEM_RELEASE, MEM_RESERVE, MEM_COMMIT};
+    use windows::Win32::System::Memory::{MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE};
 
     use super::*;
     #[test]
     fn test_memory_operation() {
-        let hprocess = unsafe {GetCurrentProcess()};
+        let hprocess = unsafe { GetCurrentProcess() };
         let native = new(hprocess, false);
         let size = 0x1000;
-        let buffer = native.virtual_alloc_ext(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE).unwrap();
+        let buffer = native
+            .virtual_alloc_ext(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
+            .unwrap();
         let mut data = 0x100131231usize;
-        native.write_process_memory(buffer, any_as_u8_slice_mut(&mut data), std::mem::size_of::<usize>()).unwrap();
+        native
+            .write_process_memory(
+                buffer,
+                any_as_u8_slice_mut(&mut data),
+                std::mem::size_of::<usize>(),
+            )
+            .unwrap();
 
         let mut read_data = 0usize;
-        native.read_process_meory(buffer, any_as_u8_slice_mut(&mut read_data), std::mem::size_of::<usize>()).unwrap();
-        assert_eq!(data,read_data);
-        native.virtual_free_ext(buffer,MEM_RELEASE).unwrap();
+        native
+            .read_process_meory(
+                buffer,
+                any_as_u8_slice_mut(&mut read_data),
+                std::mem::size_of::<usize>(),
+            )
+            .unwrap();
+        assert_eq!(data, read_data);
+        native.virtual_free_ext(buffer, MEM_RELEASE).unwrap();
 
-        let (peb,_) = native.get_peb64().unwrap();
-        println!("{}",peb.ImageBaseAddress);
+        let (peb, _) = native.get_peb64().unwrap();
+        println!("{}", peb.ImageBaseAddress);
     }
 
     #[test]
     fn test_peb() {
-        let hprocess = unsafe {GetCurrentProcess()};
+        let hprocess = unsafe { GetCurrentProcess() };
         let native = new(hprocess, false);
-        let (peb,_) = native.get_peb64().unwrap();
-        assert_ne!(0,peb.ImageBaseAddress);
+        let (peb, _) = native.get_peb64().unwrap();
+        assert_ne!(0, peb.ImageBaseAddress);
         let mut pe_header_magic: u16 = 0;
-        native.read_process_meory(peb.ImageBaseAddress as usize, any_as_u8_slice_mut(&mut pe_header_magic), 2).unwrap();
+        native
+            .read_process_meory(
+                peb.ImageBaseAddress as usize,
+                any_as_u8_slice_mut(&mut pe_header_magic),
+                2,
+            )
+            .unwrap();
         // 'MZ'
-        assert_eq!(0x5a4d,pe_header_magic);
+        assert_eq!(0x5a4d, pe_header_magic);
     }
 }

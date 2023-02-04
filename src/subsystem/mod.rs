@@ -1,12 +1,18 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
-
+#![allow(dead_code)]
+use anyhow::Result;
 use std::ffi;
 
 use windows::Win32::{
     Foundation::{HANDLE, NTSTATUS},
     System::{
+        Diagnostics::Debug::{CONTEXT, WOW64_CONTEXT},
+        Memory::{
+            MEMORY_BASIC_INFORMATION, PAGE_PROTECTION_FLAGS, VIRTUAL_ALLOCATION_TYPE,
+            VIRTUAL_FREE_TYPE,
+        },
         Threading::{LPTHREAD_START_ROUTINE, PROCESSINFOCLASS, THREAD_CREATION_FLAGS},
         WindowsProgramming::OBJECT_ATTRIBUTES,
     },
@@ -171,4 +177,61 @@ fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 
 fn any_as_u8_slice_mut<T: Sized>(p: &mut T) -> &mut [u8] {
     unsafe { std::slice::from_raw_parts_mut((p as *mut T) as *mut u8, std::mem::size_of::<T>()) }
+}
+
+pub trait SubSystem {
+    fn virtual_alloc_ext(
+        &self,
+        address: usize,
+        size: usize,
+        allocation_type: VIRTUAL_ALLOCATION_TYPE,
+        protect: PAGE_PROTECTION_FLAGS,
+    ) -> Result<usize>;
+
+    fn virtual_free_ext(&self, address: usize, free_type: VIRTUAL_FREE_TYPE) -> Result<()>;
+
+    fn virtual_query_ext(&self, address: usize) -> Result<MEMORY_BASIC_INFORMATION>;
+
+    fn virtual_protect_ext(
+        &self,
+        address: usize,
+        size: usize,
+        protect: PAGE_PROTECTION_FLAGS,
+    ) -> Result<PAGE_PROTECTION_FLAGS>;
+
+    fn read_process_meory(&self, address: usize, buffer: &mut [u8], size: usize) -> Result<usize>;
+
+    fn write_process_memory(&self, address: usize, buffer: &[u8], size: usize) -> Result<usize>;
+
+    fn query_process_info<T: Sized + Default>(
+        &self,
+        info_class: PROCESSINFOCLASS,
+        buffer: &mut T,
+    ) -> Result<()>;
+
+    fn set_process_info<T: Sized + Default>(
+        &self,
+        info_class: PROCESSINFOCLASS,
+        buffer: &T,
+    ) -> Result<()>;
+
+    fn create_remote_thread(
+        &self,
+        start_routine: LPTHREAD_START_ROUTINE,
+        args: Option<*const ::core::ffi::c_void>,
+        create_flags: THREAD_CREATION_FLAGS,
+        access: u32,
+    ) -> Result<HANDLE>;
+
+    fn get_thread_context(hthread: HANDLE) -> Result<CONTEXT>;
+
+    fn get_thread_context_wow64(&self, hthread: HANDLE) -> Result<WOW64_CONTEXT>;
+
+    fn set_thread_context(&self, hthread: HANDLE, ctx: *const CONTEXT) -> Result<()>;
+
+    fn set_thread_context_wow64(&self, hthread: HANDLE, ctx: *const WOW64_CONTEXT) -> Result<()>;
+
+    fn get_peb32(&self) -> Result<(PEB_T<u32>, usize)>;
+
+    fn get_peb64(&self) -> Result<(PEB_T<u64>, usize)>;
 }
