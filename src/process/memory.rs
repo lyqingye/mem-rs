@@ -1,6 +1,6 @@
 use crate::runtime::{any_as_u8_slice, any_as_u8_slice_mut};
 
-use super::{process::Process};
+use super::process::Process;
 use anyhow::Result;
 use windows::Win32::System::Memory::{
     MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_RELEASE, MEM_RESET, PAGE_PROTECTION_FLAGS,

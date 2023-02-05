@@ -16,7 +16,7 @@ use windows::Win32::{
         Threading::{
             LPTHREAD_START_ROUTINE, PROCESSINFOCLASS, PROCESS_ACCESS_RIGHTS, THREAD_CREATION_FLAGS,
         },
-        WindowsProgramming::OBJECT_ATTRIBUTES,
+        WindowsProgramming::{OBJECT_ATTRIBUTES, SYSTEM_INFORMATION_CLASS},
     },
 };
 
@@ -173,6 +173,19 @@ pub struct Wow64Barrier {
     pub mismatch: bool,
 }
 
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub image_name: String,
+    pub threads: Vec<ThreadInfo>,
+}
+
+#[derive(Debug, Default)]
+pub struct ThreadInfo {
+    pub tid: HANDLE,
+    pub address: usize,
+    pub is_main_thread: usize,
+}
+
 extern "C" {
     pub fn NtSetInformationProcess(
         hprocess: HANDLE,
@@ -215,6 +228,8 @@ pub fn any_as_u8_slice_mut<T: Sized>(p: &mut T) -> &mut [u8] {
 }
 
 pub trait Runtime {
+    fn enum_process(&self, callback: &mut dyn FnMut(ProcessInfo) -> bool) -> Result<()>;
+
     fn open_process(&self, pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<HANDLE>;
 
     fn virtual_alloc(
@@ -272,6 +287,8 @@ pub trait Runtime {
         info_class: PROCESSINFOCLASS,
         buffer: &[u8],
     ) -> Result<()>;
+
+    fn query_system_info(&self, info_class: SYSTEM_INFORMATION_CLASS) -> Result<Vec<u8>>;
 
     fn create_remote_thread(
         &self,

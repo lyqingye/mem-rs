@@ -1,6 +1,6 @@
 use anyhow::Result;
 use windows::Win32::{
-    Foundation::{GetLastError, BOOL, FALSE, HANDLE, TRUE, CloseHandle},
+    Foundation::{CloseHandle, GetLastError, HANDLE, TRUE},
     System::{
         Diagnostics::Debug::{
             GetThreadContext, ReadProcessMemory, SetThreadContext, Wow64GetThreadContext,
@@ -11,26 +11,59 @@ use windows::Win32::{
             MEMORY_BASIC_INFORMATION, PAGE_PROTECTION_FLAGS, VIRTUAL_ALLOCATION_TYPE,
             VIRTUAL_FREE_TYPE,
         },
-        SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
         Threading::{
-            GetCurrentProcess, GetCurrentProcessId, IsWow64Process, NtQueryInformationProcess,
-            OpenProcess, ProcessBasicInformation, ProcessWow64Information, LPTHREAD_START_ROUTINE,
+            GetCurrentProcess, GetCurrentProcessId, NtQueryInformationProcess, OpenProcess,
+            ProcessBasicInformation, ProcessWow64Information, LPTHREAD_START_ROUTINE,
             PROCESSINFOCLASS, PROCESS_ACCESS_RIGHTS, PROCESS_BASIC_INFORMATION,
             THREAD_CREATION_FLAGS,
+        },
+        WindowsProgramming::{
+            NtQuerySystemInformation, SystemProcessInformation, SYSTEM_INFORMATION_CLASS,
+            SYSTEM_PROCESS_INFORMATION,
         },
     },
 };
 
 use super::{
     any_as_u8_slice_mut, NtCreateThreadEx, NtResumeProcess, NtResumeThread,
-    NtSetInformationProcess, NtSuspendProcess, NtSuspendThread, Runtime, PEB_T,
+    NtSetInformationProcess, NtSuspendProcess, NtSuspendThread, ProcessInfo, Runtime, PEB_T,
 };
 
-pub struct Native {
+pub struct SystemProcessInfoIter {
+    ptr: *const u8,
 }
 
+impl SystemProcessInfoIter {
+    pub fn new(buffer: *const u8) -> SystemProcessInfoIter {
+        unsafe { SystemProcessInfoIter { ptr: buffer } }
+    }
+}
+
+impl Iterator for SystemProcessInfoIter {
+    type Item = *const SYSTEM_PROCESS_INFORMATION;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ptr.is_null() {
+            None
+        } else {
+            unsafe {
+                let result: Self::Item = core::mem::transmute(self.ptr);
+                let next = (*result).NextEntryOffset as usize;
+                if next == 0 {
+                    self.ptr = core::ptr::null();
+                } else {
+                    self.ptr = self.ptr.add(next)
+                }
+                Some(result)
+            }
+        }
+    }
+}
+
+pub struct Native {}
+
 pub fn new() -> Native {
-    Native {  }
+    Native {}
 }
 
 pub unsafe fn last_error<T: Sized + Default>() -> Result<T> {
@@ -47,6 +80,29 @@ pub fn map_win32_result<T: Sized>(err: windows::core::Result<T>) -> Result<T> {
 }
 
 impl Runtime for Native {
+    fn enum_process(&self, callback: &mut dyn FnMut(ProcessInfo) -> bool) -> Result<()> {
+        let result = self.query_system_info(SystemProcessInformation)?;
+        for info_ptr in SystemProcessInfoIter::new(result.as_ptr()) {
+            assert!(!info_ptr.is_null());
+            let info = unsafe { info_ptr.as_ref().unwrap() };
+            let image_name;
+            if info.ImageName.Buffer.is_null() {
+                image_name = "".to_owned();
+            } else {
+                image_name = unsafe { info.ImageName.Buffer.to_string()? };
+            }
+            if (*callback)(ProcessInfo {
+                pid: info.UniqueProcessId.0 as _,
+                image_name,
+                threads: Vec::new(),
+            }) {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
     fn open_process(&self, pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<HANDLE> {
         let hprocess;
         unsafe {
@@ -221,6 +277,35 @@ impl Runtime for Native {
         }
     }
 
+    fn query_system_info(&self, info_class: SYSTEM_INFORMATION_CLASS) -> Result<Vec<u8>> {
+        let temp_buf_size: usize = 0x8;
+        let mut temp_buf = vec![0u8; temp_buf_size];
+        let mut buffer_size: u32 = 0;
+        unsafe {
+            if NtQuerySystemInformation(
+                info_class,
+                temp_buf.as_mut_ptr() as _,
+                temp_buf_size as u32,
+                &mut buffer_size,
+            )
+            .is_err()
+            {
+                let mut buffer = Vec::with_capacity(buffer_size as usize);
+                buffer.resize(buffer_size as usize, 0);
+                let result = NtQuerySystemInformation(
+                    info_class,
+                    buffer.as_mut_ptr() as _,
+                    buffer_size,
+                    &mut buffer_size,
+                );
+                map_win32_result(result)?;
+                Ok(buffer)
+            } else {
+                Ok(temp_buf)
+            }
+        }
+    }
+
     fn create_remote_thread(
         &self,
         hprocess: HANDLE,
@@ -391,7 +476,7 @@ mod test {
     #[test]
     fn test_memory_operation() {
         let hprocess = unsafe { GetCurrentProcess() };
-        let native = new(hprocess, false);
+        let native = new();
         let size = 0x1000;
         let buffer = native
             .virtual_alloc(hprocess, 0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
@@ -425,7 +510,7 @@ mod test {
     #[test]
     fn test_peb() {
         let hprocess = unsafe { GetCurrentProcess() };
-        let native = new(hprocess, false);
+        let native = new();
         let (peb, _) = native.get_peb64(hprocess).unwrap();
         assert_ne!(0, peb.ImageBaseAddress);
         let mut pe_header_magic: u16 = 0;
@@ -439,5 +524,16 @@ mod test {
             .unwrap();
         // 'MZ'
         assert_eq!(0x5a4d, pe_header_magic);
+    }
+
+    #[test]
+    fn test_enum_process() {
+        let native = new();
+        native
+            .enum_process(&mut |info| -> bool {
+                println!("{:?} {}", info.pid, info.image_name);
+                return false;
+            })
+            .unwrap();
     }
 }

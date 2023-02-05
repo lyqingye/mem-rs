@@ -1,9 +1,21 @@
 use anyhow::Result;
-use windows::Win32::{Foundation::{HANDLE, BOOL, FALSE, TRUE}, System::{SystemInformation::{SYSTEM_INFO, GetNativeSystemInfo}, Threading::{GetCurrentProcess, IsWow64Process, PROCESS_ACCESS_RIGHTS, GetProcessId}}};
+use windows::Win32::{
+    Foundation::{BOOL, FALSE, HANDLE, TRUE},
+    System::{
+        SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
+        Threading::{GetCurrentProcess, GetProcessId, IsWow64Process, PROCESS_ACCESS_RIGHTS},
+    },
+};
 
-use crate::runtime::{Runtime, native::{Native, self}, Wow64Barrier, BarrierType};
+use crate::runtime::{
+    native::{self},
+    BarrierType, Runtime, Wow64Barrier,
+};
 
-use super::{memory::{self, ProcessMemory}, modules::{ProcessModule, self}};
+use super::{
+    memory::{self, ProcessMemory},
+    modules::{self, ProcessModule},
+};
 
 pub struct Process {
     wow_barrier: Wow64Barrier,
@@ -14,22 +26,50 @@ pub struct Process {
     runtime: Box<dyn Runtime>,
 }
 
-pub fn process_from_pid(pid: u32,access: PROCESS_ACCESS_RIGHTS) -> Result<Process> {
+pub fn process_from_name(name: String, access: PROCESS_ACCESS_RIGHTS) -> Result<Process> {
     let runtime = native::new();
-    let hprocess = runtime.open_process(pid, access)?;
-    process_from_handle(hprocess, Some(Box::new(runtime)))
+    let mut process_info = None;
+    runtime.enum_process(&mut |info| -> bool {
+        if info.image_name == name {
+            process_info = Some(info);
+            true
+        } else {
+            false
+        }
+    })?;
+
+    if let Some(info) = process_info {
+        process_from_pid(info.pid, access, Some(Box::new(runtime)))
+    } else {
+        Err(anyhow::anyhow!("process not found! {:?}", name))
+    }
 }
 
-pub fn process_from_handle(hprocess: HANDLE, runtime_opt: Option<Box<dyn Runtime>>) -> Result<Process> {
+pub fn process_from_pid(
+    pid: u32,
+    access: PROCESS_ACCESS_RIGHTS,
+    runtime_opt: Option<Box<dyn Runtime>>,
+) -> Result<Process> {
+    let runtime = runtime_opt.unwrap_or(Box::new(native::new()));
+    let hprocess = runtime.open_process(pid, access)?;
+    process_from_handle(hprocess, Some(runtime))
+}
+
+pub fn process_from_handle(
+    hprocess: HANDLE,
+    runtime_opt: Option<Box<dyn Runtime>>,
+) -> Result<Process> {
     let runtime = runtime_opt.unwrap_or(Box::new(native::new()));
 
-    let pid = unsafe{ GetProcessId(hprocess)};
+    let pid = unsafe { GetProcessId(hprocess) };
     let mut info = SYSTEM_INFO::default();
     unsafe {
         GetNativeSystemInfo(&mut info);
     }
 
     let mut wow_barrier = Wow64Barrier::default();
+
+    // TODO Get os arch
     let x86os = false;
 
     if x86os {
@@ -62,18 +102,35 @@ pub fn process_from_handle(hprocess: HANDLE, runtime_opt: Option<Box<dyn Runtime
         }
     }
 
-    Ok(Process { wow_barrier, page_size: info.dwPageSize as usize, x86os, pid, handle: hprocess, runtime: runtime })
+    Ok(Process {
+        wow_barrier,
+        page_size: info.dwPageSize as usize,
+        x86os,
+        pid,
+        handle: hprocess,
+        runtime: runtime,
+    })
 }
 
-
 impl Process {
-
     pub fn pid(&self) -> u32 {
         self.pid
     }
 
     pub fn handle(&self) -> HANDLE {
         self.handle
+    }
+
+    pub fn wow_barrier(&self) -> &Wow64Barrier {
+        &self.wow_barrier
+    }
+
+    pub fn page_size(&self) -> usize {
+        self.page_size
+    }
+
+    pub fn is_x86os(&self) -> bool {
+        self.x86os
     }
 
     pub fn suspend(&self) -> Result<()> {
@@ -106,7 +163,6 @@ impl Process {
         modules::new(self)
     }
 }
-
 
 impl Drop for Process {
     fn drop(&mut self) {
