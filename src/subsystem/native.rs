@@ -20,7 +20,10 @@ use windows::Win32::{
     },
 };
 
-use super::{any_as_u8_slice_mut, NtCreateThreadEx, NtSetInformationProcess, SubSystem, PEB_T};
+use super::{
+    any_as_u8_slice_mut, NtCreateThreadEx, NtResumeProcess, NtResumeThread,
+    NtSetInformationProcess, NtSuspendProcess, NtSuspendThread, SubSystem, PEB_T,
+};
 
 /// Type of barrier
 #[derive(Debug)]
@@ -359,6 +362,48 @@ impl SubSystem for Native {
                 core::mem::size_of::<PEB_T<u64>>(),
             )?;
             Ok((peb, info.PebBaseAddress as _))
+        }
+    }
+
+    fn suspend_process(&self) -> Result<()> {
+        unsafe {
+            if NtSuspendProcess(self.hprocess).is_ok() {
+                Ok(())
+            } else {
+                last_error()
+            }
+        }
+    }
+
+    fn resume_process(&self) -> Result<()> {
+        unsafe {
+            if NtResumeProcess(self.hprocess).is_ok() {
+                Ok(())
+            } else {
+                last_error()
+            }
+        }
+    }
+
+    fn suspend_thread(&self, hthread: HANDLE) -> Result<u32> {
+        let mut resume_counter: u32 = 0;
+        unsafe {
+            if NtSuspendThread(hthread, &mut resume_counter).is_ok() {
+                Ok(resume_counter)
+            } else {
+                last_error()
+            }
+        }
+    }
+
+    fn resume_thread(&self, hthread: HANDLE) -> Result<u32> {
+        let mut resume_counter: u32 = 0;
+        unsafe {
+            if NtResumeThread(hthread, &mut resume_counter).is_ok() {
+                Ok(resume_counter)
+            } else {
+                last_error()
+            }
         }
     }
 }

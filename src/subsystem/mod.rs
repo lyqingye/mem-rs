@@ -169,13 +169,23 @@ extern "C" {
         maximum_stack_size: usize,
         arttribute_list: *const PS_ATTRIBUTE_LIST,
     ) -> NTSTATUS;
+
+    pub fn NtSuspendProcess(hprocess: HANDLE) -> NTSTATUS;
+
+    pub fn NtResumeProcess(hprocess: HANDLE) -> NTSTATUS;
+
+    pub fn NtSuspendThread(hthread: HANDLE, previous_suspend_count: *const u32) -> NTSTATUS;
+
+    pub fn NtResumeThread(hthread: HANDLE, previous_suspend_count: *const u32) -> NTSTATUS;
 }
 
-fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
+#[inline]
+pub fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     unsafe { std::slice::from_raw_parts((p as *const T) as *const u8, std::mem::size_of::<T>()) }
 }
 
-fn any_as_u8_slice_mut<T: Sized>(p: &mut T) -> &mut [u8] {
+#[inline]
+pub fn any_as_u8_slice_mut<T: Sized>(p: &mut T) -> &mut [u8] {
     unsafe { std::slice::from_raw_parts_mut((p as *mut T) as *mut u8, std::mem::size_of::<T>()) }
 }
 
@@ -226,4 +236,12 @@ pub trait SubSystem {
     fn get_peb32(&self) -> Result<(PEB_T<u32>, usize)>;
 
     fn get_peb64(&self) -> Result<(PEB_T<u64>, usize)>;
+
+    fn suspend_process(&self) -> Result<()>;
+
+    fn resume_process(&self) -> Result<()>;
+
+    fn suspend_thread(&self, hthread: HANDLE) -> Result<u32>;
+
+    fn resume_thread(&self, hthread: HANDLE) -> Result<u32>;
 }
