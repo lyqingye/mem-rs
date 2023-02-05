@@ -13,7 +13,9 @@ use windows::Win32::{
             MEMORY_BASIC_INFORMATION, PAGE_PROTECTION_FLAGS, VIRTUAL_ALLOCATION_TYPE,
             VIRTUAL_FREE_TYPE,
         },
-        Threading::{LPTHREAD_START_ROUTINE, PROCESSINFOCLASS, THREAD_CREATION_FLAGS},
+        Threading::{
+            LPTHREAD_START_ROUTINE, PROCESSINFOCLASS, PROCESS_ACCESS_RIGHTS, THREAD_CREATION_FLAGS,
+        },
         WindowsProgramming::OBJECT_ATTRIBUTES,
     },
 };
@@ -148,6 +150,29 @@ pub struct PEB_T<T: Sized + Default + Copy> {
     pub PlaceholderCompatibilityModeReserved: [u8; 7],
 }
 
+/// Type of barrier
+#[derive(Debug)]
+pub enum BarrierType {
+    WOW32_32 = 0, // Both processes are WoW64
+    WOW64_64,     // Both processes are x64
+    WOW32_64,     // Managing x64 process from WoW64 process
+    WOW64_32,     // Managing WOW64 process from x64 process
+}
+impl Default for BarrierType {
+    fn default() -> Self {
+        Self::WOW32_32
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Wow64Barrier {
+    pub barrier: BarrierType,
+    pub source_wow64: bool,
+    pub target_wow64: bool,
+    pub x86_os: bool,
+    pub mismatch: bool,
+}
+
 extern "C" {
     pub fn NtSetInformationProcess(
         hprocess: HANDLE,
@@ -189,36 +214,68 @@ pub fn any_as_u8_slice_mut<T: Sized>(p: &mut T) -> &mut [u8] {
     unsafe { std::slice::from_raw_parts_mut((p as *mut T) as *mut u8, std::mem::size_of::<T>()) }
 }
 
-pub trait SubSystem {
-    fn virtual_alloc_ext(
+pub trait Runtime {
+    fn open_process(&self, pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<HANDLE>;
+
+    fn virtual_alloc(
         &self,
+        hprocess: HANDLE,
         address: usize,
         size: usize,
         allocation_type: VIRTUAL_ALLOCATION_TYPE,
         protect: PAGE_PROTECTION_FLAGS,
     ) -> Result<usize>;
 
-    fn virtual_free_ext(&self, address: usize, free_type: VIRTUAL_FREE_TYPE) -> Result<()>;
-
-    fn virtual_query_ext(&self, address: usize) -> Result<MEMORY_BASIC_INFORMATION>;
-
-    fn virtual_protect_ext(
+    fn virtual_free(
         &self,
+        hprocess: HANDLE,
+        address: usize,
+        free_type: VIRTUAL_FREE_TYPE,
+    ) -> Result<()>;
+
+    fn virtual_query(&self, hprocess: HANDLE, address: usize) -> Result<MEMORY_BASIC_INFORMATION>;
+
+    fn virtual_protect(
+        &self,
+        hprocess: HANDLE,
         address: usize,
         size: usize,
         protect: PAGE_PROTECTION_FLAGS,
     ) -> Result<PAGE_PROTECTION_FLAGS>;
 
-    fn read_process_meory(&self, address: usize, buffer: &mut [u8], size: usize) -> Result<usize>;
+    fn read_process_meory(
+        &self,
+        hprocess: HANDLE,
+        address: usize,
+        buffer: &mut [u8],
+        size: usize,
+    ) -> Result<usize>;
 
-    fn write_process_memory(&self, address: usize, buffer: &[u8], size: usize) -> Result<usize>;
+    fn write_process_memory(
+        &self,
+        hprocess: HANDLE,
+        address: usize,
+        buffer: &[u8],
+        size: usize,
+    ) -> Result<usize>;
 
-    fn query_process_info(&self, info_class: PROCESSINFOCLASS, buffer: &mut [u8]) -> Result<()>;
+    fn query_process_info(
+        &self,
+        hprocess: HANDLE,
+        info_class: PROCESSINFOCLASS,
+        buffer: &mut [u8],
+    ) -> Result<()>;
 
-    fn set_process_info(&self, info_class: PROCESSINFOCLASS, buffer: &[u8]) -> Result<()>;
+    fn set_process_info(
+        &self,
+        hprocess: HANDLE,
+        info_class: PROCESSINFOCLASS,
+        buffer: &[u8],
+    ) -> Result<()>;
 
     fn create_remote_thread(
         &self,
+        hprocess: HANDLE,
         start_routine: LPTHREAD_START_ROUTINE,
         args: Option<*const ::core::ffi::c_void>,
         create_flags: THREAD_CREATION_FLAGS,
@@ -233,15 +290,17 @@ pub trait SubSystem {
 
     fn set_thread_context_wow64(&self, hthread: HANDLE, ctx: *const WOW64_CONTEXT) -> Result<()>;
 
-    fn get_peb32(&self) -> Result<(PEB_T<u32>, usize)>;
+    fn get_peb32(&self, hprocess: HANDLE) -> Result<(PEB_T<u32>, usize)>;
 
-    fn get_peb64(&self) -> Result<(PEB_T<u64>, usize)>;
+    fn get_peb64(&self, hprocess: HANDLE) -> Result<(PEB_T<u64>, usize)>;
 
-    fn suspend_process(&self) -> Result<()>;
+    fn suspend_process(&self, hprocess: HANDLE) -> Result<()>;
 
-    fn resume_process(&self) -> Result<()>;
+    fn resume_process(&self, hprocess: HANDLE) -> Result<()>;
 
     fn suspend_thread(&self, hthread: HANDLE) -> Result<u32>;
 
     fn resume_thread(&self, hthread: HANDLE) -> Result<u32>;
+
+    fn close_handle(&self, handle: HANDLE);
 }

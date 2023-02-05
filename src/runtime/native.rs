@@ -1,6 +1,6 @@
 use anyhow::Result;
 use windows::Win32::{
-    Foundation::{GetLastError, BOOL, FALSE, HANDLE, TRUE},
+    Foundation::{GetLastError, BOOL, FALSE, HANDLE, TRUE, CloseHandle},
     System::{
         Diagnostics::Debug::{
             GetThreadContext, ReadProcessMemory, SetThreadContext, Wow64GetThreadContext,
@@ -13,90 +13,24 @@ use windows::Win32::{
         },
         SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO},
         Threading::{
-            GetCurrentProcess, IsWow64Process, NtQueryInformationProcess, ProcessBasicInformation,
-            ProcessWow64Information, LPTHREAD_START_ROUTINE, PROCESSINFOCLASS,
-            PROCESS_BASIC_INFORMATION, THREAD_CREATION_FLAGS,
+            GetCurrentProcess, GetCurrentProcessId, IsWow64Process, NtQueryInformationProcess,
+            OpenProcess, ProcessBasicInformation, ProcessWow64Information, LPTHREAD_START_ROUTINE,
+            PROCESSINFOCLASS, PROCESS_ACCESS_RIGHTS, PROCESS_BASIC_INFORMATION,
+            THREAD_CREATION_FLAGS,
         },
     },
 };
 
 use super::{
     any_as_u8_slice_mut, NtCreateThreadEx, NtResumeProcess, NtResumeThread,
-    NtSetInformationProcess, NtSuspendProcess, NtSuspendThread, SubSystem, PEB_T,
+    NtSetInformationProcess, NtSuspendProcess, NtSuspendThread, Runtime, PEB_T,
 };
 
-/// Type of barrier
-#[derive(Debug)]
-pub enum BarrierType {
-    WOW32_32 = 0, // Both processes are WoW64
-    WOW64_64,     // Both processes are x64
-    WOW32_64,     // Managing x64 process from WoW64 process
-    WOW64_32,     // Managing WOW64 process from x64 process
-}
-impl Default for BarrierType {
-    fn default() -> Self {
-        Self::WOW32_32
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct Wow64Barrier {
-    pub barrier: BarrierType,
-    pub source_wow64: bool,
-    pub target_wow64: bool,
-    pub x86_os: bool,
-    pub mismatch: bool,
-}
-
 pub struct Native {
-    hprocess: HANDLE,
-    wow_barrier: Wow64Barrier,
-    page_size: usize,
-    x86os: bool,
 }
 
-pub fn new(hprocess: HANDLE, x86os: bool) -> Native {
-    let mut info = SYSTEM_INFO::default();
-    unsafe {
-        GetNativeSystemInfo(&mut info);
-    }
-
-    let mut native = Native {
-        hprocess,
-        wow_barrier: Wow64Barrier::default(),
-        page_size: info.dwPageSize as usize,
-        x86os,
-    };
-    if x86os {
-        native.wow_barrier.source_wow64 = true;
-        native.wow_barrier.target_wow64 = true;
-        native.wow_barrier.barrier = BarrierType::WOW32_32;
-    } else {
-        unsafe {
-            let mut wow_src: BOOL = FALSE;
-            let mut wow_tgt: BOOL = FALSE;
-            IsWow64Process(GetCurrentProcess(), &mut wow_src);
-            IsWow64Process(hprocess, &mut wow_tgt);
-
-            match (wow_src, wow_tgt) {
-                (TRUE, FALSE) => {
-                    native.wow_barrier.barrier = BarrierType::WOW32_32;
-                }
-                (FALSE, FALSE) => {
-                    native.wow_barrier.barrier = BarrierType::WOW64_64;
-                }
-                (TRUE, _) => {
-                    native.wow_barrier.barrier = BarrierType::WOW32_64;
-                    native.wow_barrier.mismatch = true;
-                }
-                _ => {
-                    native.wow_barrier.barrier = BarrierType::WOW64_32;
-                    native.wow_barrier.mismatch = true;
-                }
-            }
-        }
-    }
-    native
+pub fn new() -> Native {
+    Native {  }
 }
 
 pub unsafe fn last_error<T: Sized + Default>() -> Result<T> {
@@ -112,22 +46,30 @@ pub fn map_win32_result<T: Sized>(err: windows::core::Result<T>) -> Result<T> {
     err.map_err(|e| anyhow::anyhow!("code: {} message: {}", e.code(), e.message()))
 }
 
-impl SubSystem for Native {
-    fn virtual_alloc_ext(
+impl Runtime for Native {
+    fn open_process(&self, pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<HANDLE> {
+        let hprocess;
+        unsafe {
+            if pid == GetCurrentProcessId() {
+                hprocess = GetCurrentProcess();
+            } else {
+                hprocess = OpenProcess(access, false, pid)?;
+            }
+        }
+        Ok(hprocess)
+    }
+
+    fn virtual_alloc(
         &self,
+        hprocess: HANDLE,
         address: usize,
         size: usize,
         allocation_type: VIRTUAL_ALLOCATION_TYPE,
         protect: PAGE_PROTECTION_FLAGS,
     ) -> Result<usize> {
         unsafe {
-            let result = VirtualAllocEx(
-                self.hprocess,
-                Some(address as _),
-                size,
-                allocation_type,
-                protect,
-            );
+            let result =
+                VirtualAllocEx(hprocess, Some(address as _), size, allocation_type, protect);
             if result.is_null() {
                 last_error()
             } else {
@@ -136,9 +78,14 @@ impl SubSystem for Native {
         }
     }
 
-    fn virtual_free_ext(&self, address: usize, free_type: VIRTUAL_FREE_TYPE) -> Result<()> {
+    fn virtual_free(
+        &self,
+        hprocess: HANDLE,
+        address: usize,
+        free_type: VIRTUAL_FREE_TYPE,
+    ) -> Result<()> {
         unsafe {
-            if TRUE == VirtualFreeEx(self.hprocess, address as _, 0 as usize, free_type) {
+            if TRUE == VirtualFreeEx(hprocess, address as _, 0 as usize, free_type) {
                 Ok(())
             } else {
                 last_error()
@@ -146,11 +93,11 @@ impl SubSystem for Native {
         }
     }
 
-    fn virtual_query_ext(&self, address: usize) -> Result<MEMORY_BASIC_INFORMATION> {
+    fn virtual_query(&self, hprocess: HANDLE, address: usize) -> Result<MEMORY_BASIC_INFORMATION> {
         let mut info = MEMORY_BASIC_INFORMATION::default();
         unsafe {
             if 0 != VirtualQueryEx(
-                self.hprocess,
+                hprocess,
                 Some(address as _),
                 &mut info,
                 core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
@@ -162,15 +109,16 @@ impl SubSystem for Native {
         }
     }
 
-    fn virtual_protect_ext(
+    fn virtual_protect(
         &self,
+        hprocess: HANDLE,
         address: usize,
         size: usize,
         protect: PAGE_PROTECTION_FLAGS,
     ) -> Result<PAGE_PROTECTION_FLAGS> {
         let mut old = PAGE_PROTECTION_FLAGS::default();
         unsafe {
-            if TRUE == VirtualProtectEx(self.hprocess, address as _, size, protect, &mut old) {
+            if TRUE == VirtualProtectEx(hprocess, address as _, size, protect, &mut old) {
                 Ok(old)
             } else {
                 last_error()
@@ -178,13 +126,19 @@ impl SubSystem for Native {
         }
     }
 
-    fn read_process_meory(&self, address: usize, buffer: &mut [u8], size: usize) -> Result<usize> {
+    fn read_process_meory(
+        &self,
+        hprocess: HANDLE,
+        address: usize,
+        buffer: &mut [u8],
+        size: usize,
+    ) -> Result<usize> {
         assert!(buffer.len() >= size);
         let mut bytes: usize = 0;
         unsafe {
             if TRUE
                 == ReadProcessMemory(
-                    self.hprocess,
+                    hprocess,
                     address as _,
                     buffer as *mut [u8] as _,
                     size,
@@ -199,13 +153,19 @@ impl SubSystem for Native {
         }
     }
 
-    fn write_process_memory(&self, address: usize, buffer: &[u8], size: usize) -> Result<usize> {
+    fn write_process_memory(
+        &self,
+        hprocess: HANDLE,
+        address: usize,
+        buffer: &[u8],
+        size: usize,
+    ) -> Result<usize> {
         assert!(buffer.len() >= size);
         let mut bytes: usize = 0;
         unsafe {
             if TRUE
                 == WriteProcessMemory(
-                    self.hprocess,
+                    hprocess,
                     address as _,
                     buffer as *const [u8] as _,
                     size,
@@ -220,11 +180,16 @@ impl SubSystem for Native {
         }
     }
 
-    fn query_process_info(&self, info_class: PROCESSINFOCLASS, buffer: &mut [u8]) -> Result<()> {
+    fn query_process_info(
+        &self,
+        hprocess: HANDLE,
+        info_class: PROCESSINFOCLASS,
+        buffer: &mut [u8],
+    ) -> Result<()> {
         let mut length: u32 = 0;
         unsafe {
             let result = NtQueryInformationProcess(
-                self.hprocess,
+                hprocess,
                 info_class,
                 buffer as *mut [u8] as _,
                 buffer.len() as u32,
@@ -234,10 +199,15 @@ impl SubSystem for Native {
         }
     }
 
-    fn set_process_info(&self, info_class: PROCESSINFOCLASS, buffer: &[u8]) -> Result<()> {
+    fn set_process_info(
+        &self,
+        hprocess: HANDLE,
+        info_class: PROCESSINFOCLASS,
+        buffer: &[u8],
+    ) -> Result<()> {
         unsafe {
             if NtSetInformationProcess(
-                self.hprocess,
+                hprocess,
                 info_class as _,
                 buffer as *const [u8] as _,
                 buffer.len() as u32,
@@ -253,6 +223,7 @@ impl SubSystem for Native {
 
     fn create_remote_thread(
         &self,
+        hprocess: HANDLE,
         start_routine: LPTHREAD_START_ROUTINE,
         args: Option<*const ::core::ffi::c_void>,
         create_flags: THREAD_CREATION_FLAGS,
@@ -265,7 +236,7 @@ impl SubSystem for Native {
                 &mut hthread,
                 access,
                 core::ptr::null(),
-                self.hprocess,
+                hprocess,
                 start_routine,
                 arguments,
                 create_flags,
@@ -296,17 +267,11 @@ impl SubSystem for Native {
 
     fn get_thread_context_wow64(&self, hthread: HANDLE) -> Result<WOW64_CONTEXT> {
         let mut ctx = WOW64_CONTEXT::default();
-        if self.wow_barrier.target_wow64 == false {
-            Err(anyhow::anyhow!(
-                "target process is x64. WOW64 CONTEXT is not available"
-            ))
-        } else {
-            unsafe {
-                if TRUE == Wow64GetThreadContext(hthread, &mut ctx) {
-                    Ok(ctx)
-                } else {
-                    last_error()
-                }
+        unsafe {
+            if TRUE == Wow64GetThreadContext(hthread, &mut ctx) {
+                Ok(ctx)
+            } else {
+                last_error()
             }
         }
     }
@@ -331,32 +296,36 @@ impl SubSystem for Native {
         }
     }
 
-    fn get_peb32(&self) -> Result<(PEB_T<u32>, usize)> {
-        if self.wow_barrier.target_wow64 == false {
-            Err(anyhow::anyhow!(
-                "Target process is x64. PEB32 is not available"
-            ))
-        } else {
-            unsafe {
-                let mut peb: PEB_T<u32> = core::mem::zeroed();
-                let mut ptr = 064;
-                self.query_process_info(ProcessWow64Information, any_as_u8_slice_mut(&mut ptr))?;
-                self.read_process_meory(
-                    ptr,
-                    any_as_u8_slice_mut(&mut peb),
-                    core::mem::size_of::<PEB_T<u32>>(),
-                )?;
-                Ok((peb, ptr))
-            }
+    fn get_peb32(&self, hprocess: HANDLE) -> Result<(PEB_T<u32>, usize)> {
+        unsafe {
+            let mut peb: PEB_T<u32> = core::mem::zeroed();
+            let mut ptr = 064;
+            self.query_process_info(
+                hprocess,
+                ProcessWow64Information,
+                any_as_u8_slice_mut(&mut ptr),
+            )?;
+            self.read_process_meory(
+                hprocess,
+                ptr,
+                any_as_u8_slice_mut(&mut peb),
+                core::mem::size_of::<PEB_T<u32>>(),
+            )?;
+            Ok((peb, ptr))
         }
     }
 
-    fn get_peb64(&self) -> Result<(PEB_T<u64>, usize)> {
+    fn get_peb64(&self, hprocess: HANDLE) -> Result<(PEB_T<u64>, usize)> {
         unsafe {
             let mut peb: PEB_T<u64> = core::mem::zeroed();
             let mut info: PROCESS_BASIC_INFORMATION = core::mem::zeroed();
-            self.query_process_info(ProcessBasicInformation, any_as_u8_slice_mut(&mut info))?;
+            self.query_process_info(
+                hprocess,
+                ProcessBasicInformation,
+                any_as_u8_slice_mut(&mut info),
+            )?;
             self.read_process_meory(
+                hprocess,
                 info.PebBaseAddress as usize,
                 any_as_u8_slice_mut(&mut peb),
                 core::mem::size_of::<PEB_T<u64>>(),
@@ -365,9 +334,9 @@ impl SubSystem for Native {
         }
     }
 
-    fn suspend_process(&self) -> Result<()> {
+    fn suspend_process(&self, hprocess: HANDLE) -> Result<()> {
         unsafe {
-            if NtSuspendProcess(self.hprocess).is_ok() {
+            if NtSuspendProcess(hprocess).is_ok() {
                 Ok(())
             } else {
                 last_error()
@@ -375,9 +344,9 @@ impl SubSystem for Native {
         }
     }
 
-    fn resume_process(&self) -> Result<()> {
+    fn resume_process(&self, hprocess: HANDLE) -> Result<()> {
         unsafe {
-            if NtResumeProcess(self.hprocess).is_ok() {
+            if NtResumeProcess(hprocess).is_ok() {
                 Ok(())
             } else {
                 last_error()
@@ -406,6 +375,12 @@ impl SubSystem for Native {
             }
         }
     }
+
+    fn close_handle(&self, handle: HANDLE) {
+        unsafe {
+            CloseHandle(handle);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -419,11 +394,12 @@ mod test {
         let native = new(hprocess, false);
         let size = 0x1000;
         let buffer = native
-            .virtual_alloc_ext(0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
+            .virtual_alloc(hprocess, 0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
             .unwrap();
         let mut data = 0x100131231usize;
         native
             .write_process_memory(
+                hprocess,
                 buffer,
                 any_as_u8_slice_mut(&mut data),
                 std::mem::size_of::<usize>(),
@@ -433,15 +409,16 @@ mod test {
         let mut read_data = 0usize;
         native
             .read_process_meory(
+                hprocess,
                 buffer,
                 any_as_u8_slice_mut(&mut read_data) as _,
                 std::mem::size_of::<usize>(),
             )
             .unwrap();
         assert_eq!(data, read_data);
-        native.virtual_free_ext(buffer, MEM_RELEASE).unwrap();
+        native.virtual_free(hprocess, buffer, MEM_RELEASE).unwrap();
 
-        let (peb, _) = native.get_peb64().unwrap();
+        let (peb, _) = native.get_peb64(hprocess).unwrap();
         println!("{}", peb.ImageBaseAddress);
     }
 
@@ -449,11 +426,12 @@ mod test {
     fn test_peb() {
         let hprocess = unsafe { GetCurrentProcess() };
         let native = new(hprocess, false);
-        let (peb, _) = native.get_peb64().unwrap();
+        let (peb, _) = native.get_peb64(hprocess).unwrap();
         assert_ne!(0, peb.ImageBaseAddress);
         let mut pe_header_magic: u16 = 0;
         native
             .read_process_meory(
+                hprocess,
                 peb.ImageBaseAddress as usize,
                 any_as_u8_slice_mut(&mut pe_header_magic),
                 2,
