@@ -1,6 +1,6 @@
 use crate::runtime::{any_as_u8_slice, any_as_u8_slice_mut};
 
-use super::process::Process;
+use super::{mem_block::MemBlock, process::Process};
 use anyhow::Result;
 use windows::Win32::System::Memory::{
     MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_RELEASE, MEM_RESET, PAGE_PROTECTION_FLAGS,
@@ -15,7 +15,7 @@ pub fn new<'a>(ps: &'a Process) -> ProcessMemory<'a> {
 }
 
 impl<'a> ProcessMemory<'a> {
-    pub fn allocate(
+    pub fn alloc(
         &self,
         address: usize,
         size: usize,
@@ -28,6 +28,16 @@ impl<'a> ProcessMemory<'a> {
             MEM_COMMIT | MEM_RESET,
             protect,
         )
+    }
+
+    pub fn alloc_block(
+        &'a self,
+        address: usize,
+        size: usize,
+        protect: PAGE_PROTECTION_FLAGS,
+    ) -> Result<MemBlock<'a>> {
+        let address = self.alloc(address, size, protect)?;
+        Ok(MemBlock::new(self, address as _, size))
     }
 
     pub fn free(&self, address: usize) -> Result<()> {

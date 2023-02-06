@@ -262,18 +262,14 @@ impl Runtime for Native {
         buffer: &[u8],
     ) -> Result<()> {
         unsafe {
-            if NtSetInformationProcess(
+            let result = NtSetInformationProcess(
                 hprocess,
                 info_class as _,
                 buffer as *const [u8] as _,
                 buffer.len() as u32,
             )
-            .is_ok()
-            {
-                Ok(())
-            } else {
-                last_error()
-            }
+            .ok();
+            map_win32_result(result)
         }
     }
 
@@ -317,7 +313,7 @@ impl Runtime for Native {
         let arguments = args.unwrap_or(core::ptr::null());
         let mut hthread = HANDLE::default();
         unsafe {
-            if NtCreateThreadEx(
+            let result = NtCreateThreadEx(
                 &mut hthread,
                 access,
                 core::ptr::null(),
@@ -330,12 +326,9 @@ impl Runtime for Native {
                 0x100000,
                 core::ptr::null(),
             )
-            .is_ok()
-            {
-                Ok(hthread)
-            } else {
-                last_error()
-            }
+            .ok();
+            map_win32_result(result)?;
+            Ok(hthread)
         }
     }
 
@@ -421,43 +414,33 @@ impl Runtime for Native {
 
     fn suspend_process(&self, hprocess: HANDLE) -> Result<()> {
         unsafe {
-            if NtSuspendProcess(hprocess).is_ok() {
-                Ok(())
-            } else {
-                last_error()
-            }
+            let result = NtSuspendProcess(hprocess).ok();
+            map_win32_result(result)
         }
     }
 
     fn resume_process(&self, hprocess: HANDLE) -> Result<()> {
         unsafe {
-            if NtResumeProcess(hprocess).is_ok() {
-                Ok(())
-            } else {
-                last_error()
-            }
+            let result = NtResumeProcess(hprocess).ok();
+            map_win32_result(result)
         }
     }
 
     fn suspend_thread(&self, hthread: HANDLE) -> Result<u32> {
         let mut resume_counter: u32 = 0;
         unsafe {
-            if NtSuspendThread(hthread, &mut resume_counter).is_ok() {
-                Ok(resume_counter)
-            } else {
-                last_error()
-            }
+            let result = NtSuspendThread(hthread, &mut resume_counter).ok();
+            map_win32_result(result)?;
+            Ok(resume_counter)
         }
     }
 
     fn resume_thread(&self, hthread: HANDLE) -> Result<u32> {
         let mut resume_counter: u32 = 0;
         unsafe {
-            if NtResumeThread(hthread, &mut resume_counter).is_ok() {
-                Ok(resume_counter)
-            } else {
-                last_error()
-            }
+            let result = NtResumeThread(hthread, &mut resume_counter).ok();
+            map_win32_result(result)?;
+            Ok(resume_counter)
         }
     }
 
