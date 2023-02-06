@@ -83,7 +83,7 @@ impl<'a> ProcessMemory<'a> {
 
     pub fn read_t<T>(&self, address: usize, buffer: &mut T) -> Result<usize>
     where
-        T: Sized,
+        T: Sized + Copy + Default,
     {
         self.ps.runtime().read_process_meory(
             self.ps.handle(),
@@ -101,7 +101,7 @@ impl<'a> ProcessMemory<'a> {
 
     pub fn write_t<T>(&self, address: usize, buffer: &T) -> Result<usize>
     where
-        T: Sized,
+        T: Sized + Copy + Default,
     {
         self.ps.runtime().write_process_memory(
             self.ps.handle(),
