@@ -35,7 +35,7 @@ pub struct SystemProcessInfoIter {
 
 impl SystemProcessInfoIter {
     pub fn new(buffer: *const u8) -> SystemProcessInfoIter {
-        unsafe { SystemProcessInfoIter { ptr: buffer } }
+        SystemProcessInfoIter { ptr: buffer }
     }
 }
 

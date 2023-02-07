@@ -10,11 +10,13 @@ pub struct ProcessMemory<'a> {
     ps: &'a Process,
 }
 
-pub fn new<'a>(ps: &'a Process) -> ProcessMemory<'a> {
-    ProcessMemory { ps }
-}
 
 impl<'a> ProcessMemory<'a> {
+
+    pub fn new(ps: &Process) -> ProcessMemory {
+        ProcessMemory { ps }
+    }
+
     pub fn alloc(
         &self,
         address: usize,

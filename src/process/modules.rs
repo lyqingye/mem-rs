@@ -4,8 +4,9 @@ pub struct ProcessModule<'a> {
     ps: &'a Process,
 }
 
-pub fn new<'a>(ps: &'a Process) -> ProcessModule<'a> {
-    ProcessModule { ps }
-}
 
-impl<'a> ProcessModule<'a> {}
+impl<'a> ProcessModule<'a> {
+    pub fn new(ps: &Process) -> ProcessModule {
+        ProcessModule { ps }
+    }
+}
