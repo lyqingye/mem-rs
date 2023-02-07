@@ -51,6 +51,7 @@ impl<'a> MemBlock<'a> {
     pub fn realloc(&mut self, size: usize) -> Result<()> {
         let info = self.pm.query(self.ptr as _)?;
         self.ptr = self.pm.alloc(self.ptr as _, size, info.AllocationProtect)? as _;
+        self.size = size;
         Ok(())
     }
 }
