@@ -189,7 +189,7 @@ impl Runtime for Native {
         }
     }
 
-    fn read_process_meory(
+    fn read_process_memory(
         &self,
         hprocess: HANDLE,
         address: usize,
@@ -390,7 +390,7 @@ impl Runtime for Native {
                 ProcessWow64Information,
                 any_as_u8_slice_mut(&mut ptr),
             )?;
-            self.read_process_meory(
+            self.read_process_memory(
                 hprocess,
                 ptr,
                 any_as_u8_slice_mut(&mut peb),
@@ -409,7 +409,7 @@ impl Runtime for Native {
                 ProcessBasicInformation,
                 any_as_u8_slice_mut(&mut info),
             )?;
-            self.read_process_meory(
+            self.read_process_memory(
                 hprocess,
                 info.PebBaseAddress as usize,
                 any_as_u8_slice_mut(&mut peb),
@@ -463,7 +463,7 @@ impl Runtime for Native {
         let mut modules = Vec::new();
 
         // read ldr data
-        let _ = self.read_process_meory(
+        let _ = self.read_process_memory(
             hprocess,
             peb.Ldr as _,
             any_as_u8_slice_mut(&mut ldr),
@@ -483,7 +483,7 @@ impl Runtime for Native {
             let mut path_buffer = vec![0u8; 512];
 
             // read entry base info
-            let _ = self.read_process_meory(
+            let _ = self.read_process_memory(
                 hprocess,
                 head as _,
                 any_as_u8_slice_mut(&mut entry),
@@ -491,7 +491,7 @@ impl Runtime for Native {
             )?;
 
             // read path buffer
-            let _ = self.read_process_meory(
+            let _ = self.read_process_memory(
                 hprocess,
                 entry.FullDllName.Buffer as _,
                 path_buffer.as_mut(),
@@ -520,7 +520,7 @@ impl Runtime for Native {
 
             // read next entry
             if self
-                .read_process_meory(
+                .read_process_memory(
                     hprocess,
                     head as _,
                     any_as_u8_slice_mut(&mut head),
@@ -560,7 +560,7 @@ mod test {
 
         let mut read_data = 0usize;
         native
-            .read_process_meory(
+            .read_process_memory(
                 hprocess,
                 buffer,
                 any_as_u8_slice_mut(&mut read_data) as _,
@@ -582,7 +582,7 @@ mod test {
         assert_ne!(0, peb.ImageBaseAddress);
         let mut pe_header_magic: u16 = 0;
         native
-            .read_process_meory(
+            .read_process_memory(
                 hprocess,
                 peb.ImageBaseAddress as usize,
                 any_as_u8_slice_mut(&mut pe_header_magic),

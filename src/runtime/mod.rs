@@ -325,7 +325,7 @@ pub trait Runtime {
         protect: PAGE_PROTECTION_FLAGS,
     ) -> Result<PAGE_PROTECTION_FLAGS>;
 
-    fn read_process_meory(
+    fn read_process_memory(
         &self,
         hprocess: HANDLE,
         address: usize,

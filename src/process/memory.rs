@@ -69,7 +69,7 @@ impl<'a> ProcessMemory<'a> {
     pub fn read(&self, address: usize, size: usize, buffer: &mut [u8]) -> Result<usize> {
         self.ps
             .runtime()
-            .read_process_meory(self.ps.handle(), address, buffer, size)
+            .read_process_memory(self.ps.handle(), address, buffer, size)
     }
 
     pub fn read_t_copy<T>(&self, address: usize) -> Result<T>
@@ -77,7 +77,7 @@ impl<'a> ProcessMemory<'a> {
         T: Sized + Copy + Default,
     {
         let mut buffer = T::default();
-        let _ = self.ps.runtime().read_process_meory(
+        let _ = self.ps.runtime().read_process_memory(
             self.ps.handle(),
             address,
             any_as_u8_slice_mut(&mut buffer),
@@ -90,7 +90,7 @@ impl<'a> ProcessMemory<'a> {
     where
         T: Sized + Copy + Default,
     {
-        self.ps.runtime().read_process_meory(
+        self.ps.runtime().read_process_memory(
             self.ps.handle(),
             address,
             any_as_u8_slice_mut(buffer),
