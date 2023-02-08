@@ -10,9 +10,7 @@ pub struct ProcessMemory<'a> {
     ps: &'a Process,
 }
 
-
 impl<'a> ProcessMemory<'a> {
-
     pub fn new(ps: &Process) -> ProcessMemory {
         ProcessMemory { ps }
     }

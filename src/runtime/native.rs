@@ -1,4 +1,6 @@
+use crate::runtime::u8_slice_as_wstring;
 use anyhow::Result;
+use windows::core::PWSTR;
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, TRUE},
     System::{
@@ -18,15 +20,16 @@ use windows::Win32::{
             THREAD_CREATION_FLAGS,
         },
         WindowsProgramming::{
-            NtQuerySystemInformation, SystemProcessInformation, SYSTEM_INFORMATION_CLASS,
-            SYSTEM_PROCESS_INFORMATION,
+            NtQuerySystemInformation, SystemProcessInformation, LDR_DATA_TABLE_ENTRY,
+            SYSTEM_INFORMATION_CLASS, SYSTEM_PROCESS_INFORMATION,
         },
     },
 };
 
 use super::{
-    any_as_u8_slice_mut, NtCreateThreadEx, NtResumeProcess, NtResumeThread,
-    NtSetInformationProcess, NtSuspendProcess, NtSuspendThread, ProcessInfo, Runtime, PEB_T,
+    any_as_u8_slice_mut, ModuleInfo, NtCreateThreadEx, NtResumeProcess, NtResumeThread,
+    NtSetInformationProcess, NtSuspendProcess, NtSuspendThread, ProcessInfo, Runtime,
+    LDR_DATA_TABLE_ENTRY_BASE_T, PEB_LDR_DATA_T, PEB_T,
 };
 
 pub struct SystemProcessInfoIter {
@@ -449,6 +452,83 @@ impl Runtime for Native {
             CloseHandle(handle);
         }
     }
+
+    fn enum_modules64(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>> {
+        let (peb, _) = self.get_peb64(hprocess)?;
+        let mut ldr = PEB_LDR_DATA_T::<u64>::default();
+        let mut modules = Vec::new();
+
+        // read ldr data
+        let _ = self.read_process_meory(
+            hprocess,
+            peb.Ldr as _,
+            any_as_u8_slice_mut(&mut ldr),
+            core::mem::size_of::<PEB_LDR_DATA_T<u64>>(),
+        )?;
+
+        // calc offset of InLoadOrderModuleList field of LDR
+        let field_offset = std::ptr::addr_of!(ldr.InLoadOrderModuleList) as usize
+            - std::ptr::addr_of!(ldr) as usize;
+
+        let mut head = ldr.InLoadOrderModuleList.Flink;
+        loop {
+            if peb.Ldr as usize + field_offset == head as _ {
+                break;
+            }
+            let mut entry = LDR_DATA_TABLE_ENTRY_BASE_T::<u64>::default();
+            let mut path_buffer = vec![0u8; 512];
+
+            // read entry base info
+            let _ = self.read_process_meory(
+                hprocess,
+                head as _,
+                any_as_u8_slice_mut(&mut entry),
+                core::mem::size_of::<LDR_DATA_TABLE_ENTRY_BASE_T<u64>>(),
+            )?;
+
+            // read path buffer
+            let _ = self.read_process_meory(
+                hprocess,
+                entry.FullDllName.Buffer as _,
+                path_buffer.as_mut(),
+                entry.FullDllName.Length as usize,
+            )?;
+
+            let path = unsafe {
+                u8_slice_as_wstring(path_buffer.as_slice(), entry.FullDllName.Length as usize)
+            };
+
+            let file_name = std::path::PathBuf::from(path.clone())
+                .file_name()
+                .unwrap_or("unknown".as_ref())
+                .to_os_string()
+                .to_string_lossy()
+                .to_string();
+
+            // build module info
+            modules.push(ModuleInfo {
+                base_address: entry.DllBase as _,
+                size_of_image: entry.SizeOfImage as _,
+                full_path: path,
+                name: file_name,
+                ldr_ptr: head as _,
+            });
+
+            // read next entry
+            if self
+                .read_process_meory(
+                    hprocess,
+                    head as _,
+                    any_as_u8_slice_mut(&mut head),
+                    core::mem::size_of::<u64>(),
+                )
+                .is_err()
+            {
+                break;
+            }
+        }
+        Ok(modules)
+    }
 }
 
 #[cfg(test)]
@@ -518,5 +598,14 @@ mod test {
                 return false;
             })
             .unwrap();
+    }
+
+    #[test]
+    fn test_enum_modules() {
+        let native = new();
+        let hprocess = unsafe { GetCurrentProcess() };
+        for module in native.enum_modules64(hprocess).unwrap() {
+            println!("{:?}", module);
+        }
     }
 }

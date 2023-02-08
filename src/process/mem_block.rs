@@ -1,4 +1,4 @@
-use super::{memory::ProcessMemory};
+use super::memory::ProcessMemory;
 use anyhow::Result;
 
 pub struct MemBlock<'a> {

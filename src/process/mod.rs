@@ -1,3 +1,4 @@
+pub mod hook;
 pub mod mem_block;
 pub mod memory;
 pub mod modules;

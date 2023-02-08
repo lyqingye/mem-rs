@@ -50,6 +50,7 @@ pub union PEB_u<T: Sized + Default + Copy> {
 }
 
 #[repr(C)]
+#[derive(Default)]
 pub struct UNICODE_STRING_T<T: Sized + Default> {
     pub Length: u16,
     pub MaximumLength: u16,
@@ -57,6 +58,7 @@ pub struct UNICODE_STRING_T<T: Sized + Default> {
 }
 
 #[repr(C)]
+#[derive(Default)]
 pub struct LIST_ENTRY_T<T: Sized + Default + Copy> {
     pub Flink: T,
     pub Blink: T,
@@ -150,6 +152,51 @@ pub struct PEB_T<T: Sized + Default + Copy> {
     pub PlaceholderCompatibilityModeReserved: [u8; 7],
 }
 
+#[repr(C)]
+#[derive(Default)]
+pub struct PEB_LDR_DATA_T<T: Sized + Default + Copy> {
+    pub Length: u32,
+    pub Initialized: u8,
+    pub SsHandle: T,
+    pub InLoadOrderModuleList: LIST_ENTRY_T<T>,
+    pub InMemoryOrderModuleList: LIST_ENTRY_T<T>,
+    pub InInitializationOrderModuleList: LIST_ENTRY_T<T>,
+    pub EntryInProgress: T,
+    pub ShutdownInProgress: u8,
+    pub ShutdownThreadId: T,
+    pub EntryPoint: T,
+    pub SizeOfImage: u32,
+    pub FullDllName: UNICODE_STRING_T<T>,
+    pub BaseDllName: UNICODE_STRING_T<T>,
+    pub Flags: u32,
+    pub LoadCount: u16,
+    pub TlsIndex: u16,
+    pub HashLinks: LIST_ENTRY_T<T>,
+    pub TimeDateStamp: u32,
+    pub EntryPointActivationContext: T,
+    pub PatchInformation: T,
+}
+
+#[derive(Default)]
+#[repr(C)]
+pub struct LDR_DATA_TABLE_ENTRY_BASE_T<T: Sized + Default + Copy> {
+    pub InLoadOrderLinks: LIST_ENTRY_T<T>,
+    pub InMemoryOrderLinks: LIST_ENTRY_T<T>,
+    pub InInitializationOrderLinks: LIST_ENTRY_T<T>,
+    pub DllBase: T,
+    pub EntryPoint: T,
+    pub SizeOfImage: u32,
+    pub FullDllName: UNICODE_STRING_T<T>,
+    pub BaseDllName: UNICODE_STRING_T<T>,
+    pub Flags: u32,
+    pub LoadCount: u16,
+    pub TlsIndex: u16,
+    pub HashLinks: LIST_ENTRY_T<T>,
+    pub TimeDateStamp: u32,
+    pub EntryPointActivationContext: T,
+    pub PatchInformation: T,
+}
+
 /// Type of barrier
 #[derive(Debug)]
 pub enum BarrierType {
@@ -184,6 +231,15 @@ pub struct ThreadInfo {
     pub tid: HANDLE,
     pub address: usize,
     pub is_main_thread: usize,
+}
+
+#[derive(Debug, Default)]
+pub struct ModuleInfo {
+    pub base_address: usize,
+    pub size_of_image: usize,
+    pub full_path: String,
+    pub name: String,
+    pub ldr_ptr: usize,
 }
 
 extern "C" {
@@ -225,6 +281,14 @@ pub fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 #[inline]
 pub fn any_as_u8_slice_mut<T: Sized>(p: &mut T) -> &mut [u8] {
     unsafe { std::slice::from_raw_parts_mut((p as *mut T) as *mut u8, std::mem::size_of::<T>()) }
+}
+
+#[inline]
+pub unsafe fn u8_slice_as_wstring(buffer: &[u8], length: usize) -> String {
+    String::from_utf16_lossy(std::slice::from_raw_parts(
+        buffer.as_ptr() as *const u16,
+        length / 2,
+    ))
 }
 
 pub trait Runtime {
@@ -320,4 +384,6 @@ pub trait Runtime {
     fn resume_thread(&self, hthread: HANDLE) -> Result<u32>;
 
     fn close_handle(&self, handle: HANDLE);
+
+    fn enum_modules64(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>>;
 }

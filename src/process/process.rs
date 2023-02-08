@@ -12,10 +12,7 @@ use crate::runtime::{
     BarrierType, Runtime, Wow64Barrier,
 };
 
-use super::{
-    memory::ProcessMemory,
-    modules::ProcessModule,
-};
+use super::{memory::ProcessMemory, modules::ProcessModule};
 
 pub struct Process {
     wow_barrier: Wow64Barrier,
