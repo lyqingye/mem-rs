@@ -361,7 +361,7 @@ pub trait Runtime {
         &self,
         hprocess: HANDLE,
         start_routine: LPTHREAD_START_ROUTINE,
-        args: Option<*const ::core::ffi::c_void>,
+        args: Option<*const ffi::c_void>,
         create_flags: THREAD_CREATION_FLAGS,
         access: u32,
     ) -> Result<HANDLE>;
