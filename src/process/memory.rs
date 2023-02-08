@@ -37,7 +37,12 @@ impl<'a> ProcessMemory<'a> {
         protect: PAGE_PROTECTION_FLAGS,
     ) -> Result<MemBlock<'a>> {
         let address = self.alloc(address, size, protect)?;
-        Ok(MemBlock::new(self, address as _, size))
+        Ok(MemBlock::new(self, address as _, size, true))
+    }
+
+    pub fn block_from_exist_region(&'a self, address: usize) -> Result<MemBlock<'a>> {
+        let info = self.query(address)?;
+        Ok(MemBlock::new(self,address as _,info.RegionSize,false))
     }
 
     pub fn free(&self, address: usize) -> Result<()> {
