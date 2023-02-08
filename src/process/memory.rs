@@ -3,7 +3,7 @@ use crate::runtime::{any_as_u8_slice, any_as_u8_slice_mut};
 use super::{mem_block::MemBlock, process::Process};
 use anyhow::Result;
 use windows::Win32::System::Memory::{
-    MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_RELEASE, MEM_RESET, PAGE_PROTECTION_FLAGS,
+    MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_PROTECTION_FLAGS,
 };
 
 pub struct ProcessMemory<'a> {
@@ -25,7 +25,7 @@ impl<'a> ProcessMemory<'a> {
             self.ps.handle(),
             address,
             size,
-            MEM_COMMIT | MEM_RESET,
+            MEM_COMMIT | MEM_RESERVE,
             protect,
         )
     }
@@ -42,7 +42,7 @@ impl<'a> ProcessMemory<'a> {
 
     pub fn block_from_exist_region(&'a self, address: usize) -> Result<MemBlock<'a>> {
         let info = self.query(address)?;
-        Ok(MemBlock::new(self,address as _,info.RegionSize,false))
+        Ok(MemBlock::new(self, address as _, info.RegionSize, false))
     }
 
     pub fn free(&self, address: usize) -> Result<()> {

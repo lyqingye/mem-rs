@@ -1,6 +1,6 @@
 use crate::runtime::u8_slice_as_wstring;
 use anyhow::Result;
-use windows::core::PWSTR;
+
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, TRUE},
     System::{
@@ -20,8 +20,8 @@ use windows::Win32::{
             THREAD_CREATION_FLAGS,
         },
         WindowsProgramming::{
-            NtQuerySystemInformation, SystemProcessInformation, LDR_DATA_TABLE_ENTRY,
-            SYSTEM_INFORMATION_CLASS, SYSTEM_PROCESS_INFORMATION,
+            NtQuerySystemInformation, SystemProcessInformation, SYSTEM_INFORMATION_CLASS,
+            SYSTEM_PROCESS_INFORMATION,
         },
     },
 };
@@ -83,6 +83,10 @@ pub fn map_win32_result<T: Sized>(err: windows::core::Result<T>) -> Result<T> {
 }
 
 impl Runtime for Native {
+    fn current_process(&self) -> HANDLE {
+        unsafe { GetCurrentProcess() }
+    }
+
     fn enum_process(&self, callback: &mut dyn FnMut(ProcessInfo) -> bool) -> Result<()> {
         let result = self.query_system_info(SystemProcessInformation)?;
         for info_ptr in SystemProcessInfoIter::new(result.as_ptr()) {
@@ -603,7 +607,7 @@ mod test {
     #[test]
     fn test_enum_modules() {
         let native = new();
-        let hprocess = unsafe { GetCurrentProcess() };
+        let hprocess = native.current_process();
         for module in native.enum_modules64(hprocess).unwrap() {
             println!("{:?}", module);
         }

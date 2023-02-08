@@ -24,6 +24,11 @@ pub struct Process {
 }
 
 impl Process {
+    pub fn current_process() -> Result<Process> {
+        let runtime = native::new();
+        Self::process_from_handle(runtime.current_process(), Some(Box::new(runtime)))
+    }
+
     pub fn process_from_name(name: String, access: PROCESS_ACCESS_RIGHTS) -> Result<Process> {
         let runtime = native::new();
         let mut process_info = None;

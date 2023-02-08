@@ -242,6 +242,7 @@ pub struct ModuleInfo {
     pub ldr_ptr: usize,
 }
 
+#[link(name = "ntdll")]
 extern "C" {
     pub fn NtSetInformationProcess(
         hprocess: HANDLE,
@@ -261,7 +262,7 @@ extern "C" {
         zerobits: usize,
         stack_size: usize,
         maximum_stack_size: usize,
-        arttribute_list: *const PS_ATTRIBUTE_LIST,
+        attribute_list: *const PS_ATTRIBUTE_LIST,
     ) -> NTSTATUS;
 
     pub fn NtSuspendProcess(hprocess: HANDLE) -> NTSTATUS;
@@ -292,6 +293,8 @@ pub unsafe fn u8_slice_as_wstring(buffer: &[u8], length: usize) -> String {
 }
 
 pub trait Runtime {
+    fn current_process(&self) -> HANDLE;
+
     fn enum_process(&self, callback: &mut dyn FnMut(ProcessInfo) -> bool) -> Result<()>;
 
     fn open_process(&self, pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<HANDLE>;
