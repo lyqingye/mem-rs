@@ -1,6 +1,8 @@
 use crate::runtime::u8_slice_as_wstring;
 use anyhow::Result;
 
+use std::mem::{size_of, transmute_copy};
+
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, TRUE},
     System::{
@@ -457,82 +459,94 @@ impl Runtime for Native {
         }
     }
 
-    fn enum_modules64(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>> {
-        let (peb, _) = self.get_peb64(hprocess)?;
-        let mut ldr = PEB_LDR_DATA_T::<u64>::default();
-        let mut modules = Vec::new();
+    fn enum_module32(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>> {
+        enum_module_t::<u32>(self, hprocess)
+    }
 
-        // read ldr data
-        let _ = self.read_process_memory(
+    fn enum_modules64(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>> {
+        enum_module_t::<u64>(self, hprocess)
+    }
+}
+
+fn enum_module_t<T: Copy + Default + Sized>(
+    native: &Native,
+    hprocess: HANDLE,
+) -> Result<Vec<ModuleInfo>> {
+    assert!(size_of::<T>() <= size_of::<usize>());
+    let (peb, _) = native.get_peb64(hprocess)?;
+    let mut ldr = PEB_LDR_DATA_T::<T>::default();
+    let mut modules = Vec::new();
+
+    // read ldr data
+    let _ = native.read_process_memory(
+        hprocess,
+        peb.Ldr as _,
+        any_as_u8_slice_mut(&mut ldr),
+        core::mem::size_of::<PEB_LDR_DATA_T<T>>(),
+    )?;
+
+    // calc offset of InLoadOrderModuleList field of LDR
+    let field_offset =
+        std::ptr::addr_of!(ldr.InLoadOrderModuleList) as usize - std::ptr::addr_of!(ldr) as usize;
+
+    let mut head = unsafe { transmute_copy(&ldr.InLoadOrderModuleList.Flink) };
+    loop {
+        if peb.Ldr as usize + field_offset == unsafe { transmute_copy(&head) } {
+            break;
+        }
+        let mut entry = LDR_DATA_TABLE_ENTRY_BASE_T::<T>::default();
+        let mut path_buffer = vec![0u8; 512];
+
+        // read entry base info
+        let _ = native.read_process_memory(
             hprocess,
-            peb.Ldr as _,
-            any_as_u8_slice_mut(&mut ldr),
-            core::mem::size_of::<PEB_LDR_DATA_T<u64>>(),
+            head,
+            any_as_u8_slice_mut(&mut entry),
+            core::mem::size_of::<LDR_DATA_TABLE_ENTRY_BASE_T<T>>(),
         )?;
 
-        // calc offset of InLoadOrderModuleList field of LDR
-        let field_offset = std::ptr::addr_of!(ldr.InLoadOrderModuleList) as usize
-            - std::ptr::addr_of!(ldr) as usize;
+        // read path buffer
+        let _ = native.read_process_memory(
+            hprocess,
+            unsafe { transmute_copy(&entry.FullDllName.Buffer) },
+            path_buffer.as_mut(),
+            entry.FullDllName.Length as usize,
+        )?;
 
-        let mut head = ldr.InLoadOrderModuleList.Flink;
-        loop {
-            if peb.Ldr as usize + field_offset == head as _ {
-                break;
-            }
-            let mut entry = LDR_DATA_TABLE_ENTRY_BASE_T::<u64>::default();
-            let mut path_buffer = vec![0u8; 512];
+        let path = unsafe {
+            u8_slice_as_wstring(path_buffer.as_slice(), entry.FullDllName.Length as usize)
+        };
 
-            // read entry base info
-            let _ = self.read_process_memory(
+        let file_name = std::path::PathBuf::from(path.clone())
+            .file_name()
+            .unwrap_or("unknown".as_ref())
+            .to_os_string()
+            .to_string_lossy()
+            .to_string();
+
+        // build module info
+        modules.push(ModuleInfo {
+            base_address: unsafe { transmute_copy(&entry.DllBase) },
+            size_of_image: entry.SizeOfImage as _,
+            full_path: path,
+            name: file_name,
+            ldr_ptr: head,
+        });
+
+        // read next entry
+        if native
+            .read_process_memory(
                 hprocess,
-                head as _,
-                any_as_u8_slice_mut(&mut entry),
-                core::mem::size_of::<LDR_DATA_TABLE_ENTRY_BASE_T<u64>>(),
-            )?;
-
-            // read path buffer
-            let _ = self.read_process_memory(
-                hprocess,
-                entry.FullDllName.Buffer as _,
-                path_buffer.as_mut(),
-                entry.FullDllName.Length as usize,
-            )?;
-
-            let path = unsafe {
-                u8_slice_as_wstring(path_buffer.as_slice(), entry.FullDllName.Length as usize)
-            };
-
-            let file_name = std::path::PathBuf::from(path.clone())
-                .file_name()
-                .unwrap_or("unknown".as_ref())
-                .to_os_string()
-                .to_string_lossy()
-                .to_string();
-
-            // build module info
-            modules.push(ModuleInfo {
-                base_address: entry.DllBase as _,
-                size_of_image: entry.SizeOfImage as _,
-                full_path: path,
-                name: file_name,
-                ldr_ptr: head as _,
-            });
-
-            // read next entry
-            if self
-                .read_process_memory(
-                    hprocess,
-                    head as _,
-                    any_as_u8_slice_mut(&mut head),
-                    core::mem::size_of::<u64>(),
-                )
-                .is_err()
-            {
-                break;
-            }
+                head,
+                any_as_u8_slice_mut(&mut head),
+                core::mem::size_of::<T>(),
+            )
+            .is_err()
+        {
+            break;
         }
-        Ok(modules)
     }
+    Ok(modules)
 }
 
 #[cfg(test)]
