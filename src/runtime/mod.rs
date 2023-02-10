@@ -20,6 +20,7 @@ use windows::Win32::{
     },
 };
 
+pub mod driver;
 pub mod native;
 
 #[repr(C)]
@@ -320,6 +321,8 @@ pub unsafe fn u8_slice_as_wstring(buffer: &[u8], length: usize) -> String {
 }
 
 pub trait Runtime {
+    fn init(&self);
+
     fn current_process(&self) -> HANDLE;
 
     fn enum_process(&self, callback: &mut dyn FnMut(ProcessInfo) -> bool) -> Result<()>;

@@ -81,9 +81,6 @@ impl Iterator for SystemProcessInfoIter {
 
 pub struct Native {}
 
-pub fn new() -> Native {
-    Native {}
-}
 
 pub unsafe fn last_error<T: Sized + Default>() -> Result<T> {
     let err = GetLastError();
@@ -98,7 +95,17 @@ pub fn map_win32_result<T: Sized>(err: windows::core::Result<T>) -> Result<T> {
     err.map_err(|e| anyhow::anyhow!("code: {} message: {}", e.code(), e.message()))
 }
 
+impl Native {
+    pub fn new() -> Self {
+        let native = Native {};
+        native.init();
+        native
+    }
+}
+
 impl Runtime for Native {
+    fn init(&self) {}
+
     fn current_process(&self) -> HANDLE {
         unsafe { GetCurrentProcess() }
     }
@@ -309,6 +316,7 @@ impl Runtime for Native {
             )
             .is_err()
             {
+                buffer_size += 0x1000;
                 let mut buffer = Vec::with_capacity(buffer_size as usize);
                 buffer.resize(buffer_size as usize, 0);
                 let result = NtQuerySystemInformation(
@@ -692,7 +700,7 @@ mod test {
     #[test]
     fn test_memory_operation() {
         let hprocess = unsafe { GetCurrentProcess() };
-        let native = new();
+        let native = Native::new();
         let size = 0x1000;
         let buffer = native
             .virtual_alloc(hprocess, 0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
@@ -726,7 +734,7 @@ mod test {
     #[test]
     fn test_peb() {
         let hprocess = unsafe { GetCurrentProcess() };
-        let native = new();
+        let native = Native::new();
         let (peb, _) = native.get_peb64(hprocess).unwrap();
         assert_ne!(0, peb.ImageBaseAddress);
         let mut pe_header_magic: u16 = 0;
@@ -744,7 +752,7 @@ mod test {
 
     #[test]
     fn test_enum_process() {
-        let native = new();
+        let native = Native::new();
         native
             .enum_process(&mut |info| -> bool {
                 println!("{:?} {}", info.pid, info.image_name);
@@ -755,7 +763,7 @@ mod test {
 
     #[test]
     fn test_enum_modules() {
-        let native = new();
+        let native = Native::new();
         let hprocess = native.current_process();
         native
             .enum_modules64(hprocess, &mut |module| {
@@ -767,7 +775,7 @@ mod test {
 
     #[test]
     fn test_enum_pe_headers() {
-        let native = new();
+        let native = Native::new();
         let hprocess = native.current_process();
         let peb = native.get_peb64(hprocess).unwrap();
         native

@@ -25,12 +25,12 @@ pub struct Process {
 
 impl Process {
     pub fn current_process() -> Result<Process> {
-        let runtime = native::new();
+        let runtime = native::Native::new();
         Self::process_from_handle(runtime.current_process(), Some(Box::new(runtime)))
     }
 
     pub fn process_from_name(name: String, access: PROCESS_ACCESS_RIGHTS) -> Result<Process> {
-        let runtime = native::new();
+        let runtime = native::Native::new();
         let mut process_info = None;
         runtime.enum_process(&mut |info| -> bool {
             if info.image_name == name {
@@ -53,7 +53,7 @@ impl Process {
         access: PROCESS_ACCESS_RIGHTS,
         runtime_opt: Option<Box<dyn Runtime>>,
     ) -> Result<Process> {
-        let runtime = runtime_opt.unwrap_or(Box::new(native::new()));
+        let runtime = runtime_opt.unwrap_or(Box::new(native::Native::new()));
         let hprocess = runtime.open_process(pid, access)?;
         Self::process_from_handle(hprocess, Some(runtime))
     }
@@ -62,7 +62,7 @@ impl Process {
         hprocess: HANDLE,
         runtime_opt: Option<Box<dyn Runtime>>,
     ) -> Result<Process> {
-        let runtime = runtime_opt.unwrap_or(Box::new(native::new()));
+        let runtime = runtime_opt.unwrap_or(Box::new(native::Native::new()));
 
         let pid = unsafe { GetProcessId(hprocess) };
         let mut info = SYSTEM_INFO::default();
