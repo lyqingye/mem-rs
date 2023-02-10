@@ -233,13 +233,31 @@ pub struct ThreadInfo {
     pub is_main_thread: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ModuleInfo {
     pub base_address: usize,
     pub size_of_image: usize,
     pub full_path: String,
     pub name: String,
     pub ldr_ptr: usize,
+}
+
+pub const MemoryBasicInformation: i32 = 0;
+pub const MemorySectionName: i32 = 2;
+
+#[repr(C)]
+pub struct SectionName<T: Sized + Default + Copy> {
+    file_name: UNICODE_STRING_T<T>,
+    buffer: [u8; 512],
+}
+
+impl<T: Sized + Default + Copy> Default for SectionName<T> {
+    fn default() -> Self {
+        Self {
+            file_name: UNICODE_STRING_T::<T>::default(),
+            buffer: [0u8; 512],
+        }
+    }
 }
 
 #[link(name = "ntdll")]
@@ -272,6 +290,15 @@ extern "C" {
     pub fn NtSuspendThread(hthread: HANDLE, previous_suspend_count: *const u32) -> NTSTATUS;
 
     pub fn NtResumeThread(hthread: HANDLE, previous_suspend_count: *const u32) -> NTSTATUS;
+
+    pub fn NtQueryVirtualMemory(
+        hprocess: HANDLE,
+        address: *const ffi::c_void,
+        info_class: i32,
+        buffer: *mut ffi::c_void,
+        size: usize,
+        return_length: *const usize,
+    ) -> NTSTATUS;
 }
 
 #[inline]
@@ -397,6 +424,14 @@ pub trait Runtime {
     fn enum_modules64(
         &self,
         hprocess: HANDLE,
+        callback: &mut dyn FnMut(ModuleInfo) -> bool,
+    ) -> Result<()>;
+
+    fn enum_pe_headers(
+        &self,
+        hprocess: HANDLE,
+        start_address: usize,
+        end_address: usize,
         callback: &mut dyn FnMut(ModuleInfo) -> bool,
     ) -> Result<()>;
 }

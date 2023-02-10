@@ -1,8 +1,22 @@
-use crate::runtime::u8_slice_as_wstring;
+use crate::runtime::{
+    u8_slice_as_wstring, MemoryBasicInformation, NtQueryVirtualMemory, SectionName,
+};
 use anyhow::Result;
+use std::ffi::OsStr;
 
 use std::mem::{size_of, transmute_copy};
 
+use windows::Win32::Foundation::{
+    STATUS_ACCESS_DENIED, STATUS_INVALID_PARAMETER, STATUS_PROCESS_IS_TERMINATING,
+};
+use windows::Win32::System::Diagnostics::Debug::{
+    IMAGE_NT_HEADERS32, IMAGE_NT_HEADERS64, IMAGE_NT_OPTIONAL_HDR32_MAGIC,
+    IMAGE_NT_OPTIONAL_HDR64_MAGIC,
+};
+use windows::Win32::System::Memory::{MEM_COMMIT, PAGE_GUARD, PAGE_NOACCESS};
+use windows::Win32::System::SystemServices::{
+    IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE, IMAGE_NT_SIGNATURE,
+};
 use windows::Win32::{
     Foundation::{CloseHandle, GetLastError, HANDLE, TRUE},
     System::{
@@ -29,9 +43,9 @@ use windows::Win32::{
 };
 
 use super::{
-    any_as_u8_slice_mut, ModuleInfo, NtCreateThreadEx, NtResumeProcess, NtResumeThread,
-    NtSetInformationProcess, NtSuspendProcess, NtSuspendThread, ProcessInfo, Runtime,
-    LDR_DATA_TABLE_ENTRY_BASE_T, PEB_LDR_DATA_T, PEB_T,
+    any_as_u8_slice_mut, MemorySectionName, ModuleInfo, NtCreateThreadEx, NtResumeProcess,
+    NtResumeThread, NtSetInformationProcess, NtSuspendProcess, NtSuspendThread, ProcessInfo,
+    Runtime, LDR_DATA_TABLE_ENTRY_BASE_T, PEB_LDR_DATA_T, PEB_T,
 };
 
 pub struct SystemProcessInfoIter {
@@ -474,6 +488,117 @@ impl Runtime for Native {
     ) -> Result<()> {
         enum_module_t::<u64>(self, hprocess, callback)
     }
+
+    fn enum_pe_headers(
+        &self,
+        hprocess: HANDLE,
+        start_address: usize,
+        end_address: usize,
+        callback: &mut dyn FnMut(ModuleInfo) -> bool,
+    ) -> Result<()> {
+        let mut mbi = MEMORY_BASIC_INFORMATION::default();
+        let mut buffer = vec![0u8; 0x1000];
+        let mut last_base = 0;
+        for ptr in (start_address..end_address).step_by(0x1000) {
+            let status = unsafe {
+                NtQueryVirtualMemory(
+                    hprocess,
+                    ptr as _,
+                    MemoryBasicInformation,
+                    &mut mbi as *const MEMORY_BASIC_INFORMATION as _,
+                    core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+                    std::ptr::null(),
+                )
+            };
+            if status == STATUS_INVALID_PARAMETER
+                || status == STATUS_ACCESS_DENIED
+                || status == STATUS_PROCESS_IS_TERMINATING
+            {
+                break;
+            } else if status.is_err() {
+                continue;
+            }
+
+            if mbi.State != MEM_COMMIT
+                || mbi.AllocationProtect == PAGE_NOACCESS
+                || (mbi.AllocationProtect & PAGE_GUARD).0 > 0
+                || last_base == mbi.AllocationBase as usize
+            {
+                continue;
+            }
+
+            let mut module = ModuleInfo::default();
+
+            if self
+                .read_process_memory(hprocess, ptr, &mut buffer, 0x1000)
+                .is_err()
+            {
+                continue;
+            }
+
+            let dos_hdr = unsafe { *(buffer.as_ptr() as *const IMAGE_DOS_HEADER) };
+            if dos_hdr.e_magic != IMAGE_DOS_SIGNATURE {
+                continue;
+            }
+            let nt32_hdr = unsafe {
+                *(buffer.as_ptr().byte_add(dos_hdr.e_lfanew as usize) as *const IMAGE_NT_HEADERS32)
+            };
+
+            let nt64_hdr = unsafe {
+                *(buffer.as_ptr().byte_add(dos_hdr.e_lfanew as usize) as *const IMAGE_NT_HEADERS64)
+            };
+
+            if nt32_hdr.Signature != IMAGE_NT_SIGNATURE {
+                continue;
+            }
+            if nt32_hdr.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC {
+                module.size_of_image = nt32_hdr.OptionalHeader.SizeOfImage as usize;
+            } else if nt32_hdr.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC {
+                module.size_of_image = nt64_hdr.OptionalHeader.SizeOfImage as usize;
+            }
+            module.base_address = mbi.AllocationBase as _;
+
+            let mut section_name = SectionName::<u64>::default();
+
+            let status = unsafe {
+                NtQueryVirtualMemory(
+                    hprocess,
+                    mbi.AllocationBase as _,
+                    MemorySectionName,
+                    &mut section_name as *const SectionName<u64> as _,
+                    core::mem::size_of::<SectionName<u64>>(),
+                    std::ptr::null(),
+                )
+            };
+            if status.is_ok()
+                && section_name.file_name.Buffer > 0
+                && section_name.file_name.Length > 0
+            {
+                let path = unsafe {
+                    u8_slice_as_wstring(
+                        section_name.buffer.as_slice(),
+                        section_name.file_name.Length as usize,
+                    )
+                };
+                module.full_path = path.clone();
+                module.name = std::path::PathBuf::from(path)
+                    .file_name()
+                    .unwrap_or(OsStr::new("unknown"))
+                    .to_string_lossy()
+                    .to_string();
+            } else {
+                module.name = "unknown".to_owned();
+                module.full_path = module.name.clone();
+                println!("{:x}", status.0);
+            }
+
+            if callback(module) {
+                break;
+            }
+            last_base = mbi.AllocationBase as _;
+        }
+        Ok(())
+    }
 }
 
 fn enum_module_t<T: Copy + Default + Sized>(
@@ -637,6 +762,24 @@ mod test {
                 println!("{:?}", module);
                 false
             })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_enum_pe_headers() {
+        let native = new();
+        let hprocess = native.current_process();
+        let peb = native.get_peb64(hprocess).unwrap();
+        native
+            .enum_pe_headers(
+                hprocess,
+                peb.0.ImageBaseAddress as _,
+                peb.0.ImageBaseAddress as usize + 0x10000,
+                &mut |module| {
+                    println!("{:?}", module);
+                    false
+                },
+            )
             .unwrap();
     }
 }
