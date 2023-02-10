@@ -459,23 +459,31 @@ impl Runtime for Native {
         }
     }
 
-    fn enum_modules32(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>> {
-        enum_module_t::<u32>(self, hprocess)
+    fn enum_modules32(
+        &self,
+        hprocess: HANDLE,
+        callback: &mut dyn FnMut(ModuleInfo) -> bool,
+    ) -> Result<()> {
+        enum_module_t::<u32>(self, hprocess, callback)
     }
 
-    fn enum_modules64(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>> {
-        enum_module_t::<u64>(self, hprocess)
+    fn enum_modules64(
+        &self,
+        hprocess: HANDLE,
+        callback: &mut dyn FnMut(ModuleInfo) -> bool,
+    ) -> Result<()> {
+        enum_module_t::<u64>(self, hprocess, callback)
     }
 }
 
 fn enum_module_t<T: Copy + Default + Sized>(
     native: &Native,
     hprocess: HANDLE,
-) -> Result<Vec<ModuleInfo>> {
+    callback: &mut dyn FnMut(ModuleInfo) -> bool,
+) -> Result<()> {
     assert!(size_of::<T>() <= size_of::<usize>());
     let (peb, _) = native.get_peb64(hprocess)?;
     let mut ldr = PEB_LDR_DATA_T::<T>::default();
-    let mut modules = Vec::new();
 
     // read ldr data
     let _ = native.read_process_memory(
@@ -524,14 +532,16 @@ fn enum_module_t<T: Copy + Default + Sized>(
             .to_string_lossy()
             .to_string();
 
-        // build module info
-        modules.push(ModuleInfo {
+        // callback
+        if callback(ModuleInfo {
             base_address: unsafe { transmute_copy(&entry.DllBase) },
             size_of_image: entry.SizeOfImage as _,
             full_path: path,
             name: file_name,
             ldr_ptr: head,
-        });
+        }) {
+            break;
+        }
 
         // read next entry
         if native
@@ -546,7 +556,7 @@ fn enum_module_t<T: Copy + Default + Sized>(
             break;
         }
     }
-    Ok(modules)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -622,8 +632,11 @@ mod test {
     fn test_enum_modules() {
         let native = new();
         let hprocess = native.current_process();
-        for module in native.enum_modules64(hprocess).unwrap() {
-            println!("{:?}", module);
-        }
+        native
+            .enum_modules64(hprocess, &mut |module| {
+                println!("{:?}", module);
+                false
+            })
+            .unwrap();
     }
 }
