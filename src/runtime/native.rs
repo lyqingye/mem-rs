@@ -459,7 +459,7 @@ impl Runtime for Native {
         }
     }
 
-    fn enum_module32(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>> {
+    fn enum_modules32(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>> {
         enum_module_t::<u32>(self, hprocess)
     }
 
@@ -491,7 +491,7 @@ fn enum_module_t<T: Copy + Default + Sized>(
 
     let mut head = unsafe { transmute_copy(&ldr.InLoadOrderModuleList.Flink) };
     loop {
-        if peb.Ldr as usize + field_offset == unsafe { transmute_copy(&head) } {
+        if peb.Ldr as usize + field_offset == head {
             break;
         }
         let mut entry = LDR_DATA_TABLE_ENTRY_BASE_T::<T>::default();
@@ -503,7 +503,7 @@ fn enum_module_t<T: Copy + Default + Sized>(
             head,
             any_as_u8_slice_mut(&mut entry),
             core::mem::size_of::<LDR_DATA_TABLE_ENTRY_BASE_T<T>>(),
-        )?;
+        );
 
         // read path buffer
         let _ = native.read_process_memory(
@@ -511,7 +511,7 @@ fn enum_module_t<T: Copy + Default + Sized>(
             unsafe { transmute_copy(&entry.FullDllName.Buffer) },
             path_buffer.as_mut(),
             entry.FullDllName.Length as usize,
-        )?;
+        );
 
         let path = unsafe {
             u8_slice_as_wstring(path_buffer.as_slice(), entry.FullDllName.Length as usize)

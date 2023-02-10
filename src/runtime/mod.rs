@@ -388,7 +388,7 @@ pub trait Runtime {
 
     fn close_handle(&self, handle: HANDLE);
 
-    fn enum_module32(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>>;
+    fn enum_modules32(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>>;
 
     fn enum_modules64(&self, hprocess: HANDLE) -> Result<Vec<ModuleInfo>>;
 }
