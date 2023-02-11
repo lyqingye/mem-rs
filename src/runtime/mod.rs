@@ -371,7 +371,7 @@ pub trait Runtime {
         size: usize,
     ) -> Result<usize>;
 
-    fn physical_alloc(&self, physical_address: usize, size: usize) -> Result<usize>;
+    fn physical_alloc(&self, size: usize) -> Result<usize>;
 
     fn physical_free(&self, physical_address: usize) -> Result<()>;
 

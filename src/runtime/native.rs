@@ -267,7 +267,7 @@ impl Runtime for Native {
         }
     }
 
-    fn physical_alloc(&self, _physical_address: usize, _size: usize) -> Result<usize> {
+    fn physical_alloc(&self, _size: usize) -> Result<usize> {
         unimplemented!()
     }
 

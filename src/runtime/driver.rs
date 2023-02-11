@@ -123,8 +123,8 @@ impl Runtime for Driver {
         Ok(write_bytes)
     }
 
-    fn physical_alloc(&self, physical_address: usize, size: usize) -> Result<usize> {
-        let allocate_address = self.ctl.alloc_physcinal_memory(physical_address, size)?;
+    fn physical_alloc(&self, size: usize) -> Result<usize> {
+        let allocate_address = self.ctl.alloc_physcinal_memory( size)?;
         Ok(allocate_address)
     }
 
