@@ -81,7 +81,6 @@ impl Iterator for SystemProcessInfoIter {
 
 pub struct Native {}
 
-
 pub unsafe fn last_error<T: Sized + Default>() -> Result<T> {
     let err = GetLastError();
     if err.is_ok() {
@@ -97,14 +96,14 @@ pub fn map_win32_result<T: Sized>(err: windows::core::Result<T>) -> Result<T> {
 
 impl Native {
     pub fn new() -> Self {
-        let native = Native {};
-        native.init();
+        let mut native = Native {};
+        native.init().unwrap();
         native
     }
 }
 
 impl Runtime for Native {
-    fn init(&self) {}
+    fn init(&mut self) -> Result<()> { Ok(()) }
 
     fn current_process(&self) -> HANDLE {
         unsafe { GetCurrentProcess() }
@@ -264,6 +263,22 @@ impl Runtime for Native {
                 last_error()
             }
         }
+    }
+
+    fn physical_alloc(&self, _physical_address: usize, _size: usize) -> Result<usize> {
+        unimplemented!()
+    }
+
+    fn physical_free(&self, _physical_address: usize) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn physical_write(&self, _physical_address: usize, _buffer: &[u8], _size: usize) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn physical_read(&self, _physical_address: usize, _buffer: &mut [u8], _size: usize) -> Result<()> {
+        unimplemented!()
     }
 
     fn query_process_info(

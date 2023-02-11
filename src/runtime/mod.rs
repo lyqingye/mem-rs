@@ -321,7 +321,7 @@ pub unsafe fn u8_slice_as_wstring(buffer: &[u8], length: usize) -> String {
 }
 
 pub trait Runtime {
-    fn init(&self);
+    fn init(&mut self) -> Result<()>;
 
     fn current_process(&self) -> HANDLE;
 
@@ -370,6 +370,14 @@ pub trait Runtime {
         buffer: &[u8],
         size: usize,
     ) -> Result<usize>;
+
+    fn physical_alloc(&self, physical_address: usize, size: usize) -> Result<usize>;
+
+    fn physical_free(&self, physical_address: usize) -> Result<()>;
+
+    fn physical_write(&self, physical_address: usize, buffer: &[u8], size: usize) -> Result<()>;
+
+    fn physical_read(&self, physical_address: usize, buffer: &mut [u8], size: usize) -> Result<()>;
 
     fn query_process_info(
         &self,

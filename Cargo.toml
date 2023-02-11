@@ -24,3 +24,7 @@ features = [
     "Win32_System_Kernel",
     "Win32_System_SystemServices"
 ]
+
+[dependencies.driver-loader-rs]
+version = "0.1.0"
+path = "C:\\Users\\ex\\Documents\\GitHub\\driver-loader-rs\\"
