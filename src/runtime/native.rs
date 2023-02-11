@@ -103,7 +103,9 @@ impl Native {
 }
 
 impl Runtime for Native {
-    fn init(&mut self) -> Result<()> { Ok(()) }
+    fn init(&mut self) -> Result<()> {
+        Ok(())
+    }
 
     fn current_process(&self) -> HANDLE {
         unsafe { GetCurrentProcess() }
@@ -273,11 +275,21 @@ impl Runtime for Native {
         unimplemented!()
     }
 
-    fn physical_write(&self, _physical_address: usize, _buffer: &[u8], _size: usize) -> Result<()> {
+    fn physical_write(
+        &self,
+        _physical_address: usize,
+        _buffer: &[u8],
+        _size: usize,
+    ) -> Result<usize> {
         unimplemented!()
     }
 
-    fn physical_read(&self, _physical_address: usize, _buffer: &mut [u8], _size: usize) -> Result<()> {
+    fn physical_read(
+        &self,
+        _physical_address: usize,
+        _buffer: &mut [u8],
+        _size: usize,
+    ) -> Result<usize> {
         unimplemented!()
     }
 

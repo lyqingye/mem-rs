@@ -375,9 +375,14 @@ pub trait Runtime {
 
     fn physical_free(&self, physical_address: usize) -> Result<()>;
 
-    fn physical_write(&self, physical_address: usize, buffer: &[u8], size: usize) -> Result<()>;
+    fn physical_write(&self, physical_address: usize, buffer: &[u8], size: usize) -> Result<usize>;
 
-    fn physical_read(&self, physical_address: usize, buffer: &mut [u8], size: usize) -> Result<()>;
+    fn physical_read(
+        &self,
+        physical_address: usize,
+        buffer: &mut [u8],
+        size: usize,
+    ) -> Result<usize>;
 
     fn query_process_info(
         &self,
